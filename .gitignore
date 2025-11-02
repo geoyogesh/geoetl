@@ -27,3 +27,8 @@ cobertura.xml
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 .claude/
+# Benchmark data and outputs
+bench/data/
+bench/apps/
+bench/output/
+bench/results/
