@@ -1,4 +1,4 @@
-.PHONY: fmt lint test security coverage coverage-open check help
+.PHONY: fmt lint test security coverage coverage-open docs-build check help
 
 help:
 	@echo "Available targets:"
@@ -8,7 +8,8 @@ help:
 	@echo "  make security       # Run cargo audit and cargo deny"
 	@echo "  make coverage       # Generate coverage summary (text)"
 	@echo "  make coverage-open  # Generate coverage report and open in browser"
-	@echo "  make check          # Run fmt, lint, test, security, and coverage"
+	@echo "  make docs-build     # Build documentation site"
+	@echo "  make check          # Run fmt, lint, test, security, coverage, and docs-build"
 
 fmt:
 	cargo fmt --all
@@ -31,7 +32,10 @@ coverage:
 coverage-open:
 	cargo llvm-cov --workspace --all-targets --open --fail-under-lines 80
 
-check: fmt lint test security coverage
+docs-build:
+	cd docs/geoetl-doc-site && yarn build
+
+check: fmt lint test security coverage docs-build
 
 geoetl-cli-dev:
 	cargo fmt --all

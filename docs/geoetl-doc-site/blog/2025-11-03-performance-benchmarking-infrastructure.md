@@ -215,8 +215,8 @@ We tested GeoETL with the **Microsoft Buildings dataset** from [GeoArrow Data](h
 
 | Dataset | Rows | Size | Duration | Memory | Throughput |
 |---------|------|------|----------|--------|------------|
-| 10k | 10,000 | 0.31 MB | <1s | Minimal | Instant |
-| 100k | 100,000 | 3.20 MB | <1s | Minimal | Instant |
+| 10k | 10,000 | 0.31 MB | &lt;1s | Minimal | Instant |
+| 100k | 100,000 | 3.20 MB | &lt;1s | Minimal | Instant |
 | 1M | 1,000,000 | 32.11 MB | 1s | Minimal | 3,211 MB/min |
 | **Full** | **129M** | **4.2 GB** | **1.86 min** | **49.9 MB** | **2,266 MB/min** |
 
@@ -243,7 +243,7 @@ We tested GeoETL with the **Microsoft Buildings dataset** from [GeoArrow Data](h
 
 | Dataset | Features | Size | Duration | Memory | Throughput | CPU |
 |---------|----------|------|----------|--------|------------|-----|
-| 10k | 10,000 | 1.14 MB | <1s | Minimal | Instant | N/A |
+| 10k | 10,000 | 1.14 MB | &lt;1s | Minimal | Instant | N/A |
 | 100k | 100,000 | 11.40 MB | 2s | Minimal | 380 MB/min | N/A |
 | 1M | 1,000,000 | 114.13 MB | 23s | 67.5 MB | 300 MB/min | 99.7% |
 | **Full** | **129M** | **14.5 GB** | **49.95 min** | **83.7 MB** | **297 MB/min** | **99.5%** |
