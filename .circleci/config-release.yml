@@ -165,8 +165,9 @@ jobs:
             - artifacts
 
   build-windows-x86_64-msvc:
-    executor: win/default
-    resource_class: windows.large
+    executor:
+      name: win/default
+      size: large
     environment:
       SCCACHE_DIR: 'C:\Users\circleci\AppData\Local\sccache'
     steps:
