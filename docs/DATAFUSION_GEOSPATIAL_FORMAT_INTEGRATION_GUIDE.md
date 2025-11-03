@@ -516,7 +516,8 @@ impl Default for SimpleGeoSource {
         Self {
             metrics: ExecutionPlanMetricsSet::default(),
             statistics: Statistics::default(),
-            batch_size: 1024, // Default batch size
+            batch_size: 8192, // Default batch size (conservative)
+                              // For large files, use 262,144 (see GeoETL ADR 001/002)
         }
     }
 }
@@ -1164,8 +1165,10 @@ async fn main() -> Result<()> {
     let ctx = SessionContext::new();
 
     // Configure custom options
+    // Based on GeoETL benchmarking: 262,144 (256K) is optimal for large datasets
+    // See docs/adr/001-streaming-geojson-architecture.md and docs/adr/002-streaming-csv-architecture.md
     let options = SimpleGeoFormatOptions::default()
-        .with_batch_size(8192)
+        .with_batch_size(262144)  // Optimal: 256K features (1.43x faster than 8K default)
         .with_geometry_column_name("location");
 
     ctx.register_simple_geo_with_options(

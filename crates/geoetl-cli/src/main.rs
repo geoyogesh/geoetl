@@ -91,6 +91,23 @@ enum Commands {
         /// Only required when converting from CSV with WKT geometries to `GeoJSON`.
         #[arg(long, value_name = "TYPE")]
         geometry_type: Option<String>,
+
+        /// Number of rows per batch for processing (default: 8192).
+        /// Larger values use more memory but may improve throughput.
+        /// Recommended: 8192 for balanced performance, 65536 for high-memory systems.
+        #[arg(long, value_name = "SIZE")]
+        batch_size: Option<usize>,
+
+        /// Number of partitions to use for reading data (default: 1).
+        /// Higher values enable parallel reading but require more memory.
+        /// Set to number of CPU cores for maximum parallelism.
+        #[arg(long, value_name = "COUNT")]
+        read_partitions: Option<usize>,
+
+        /// Number of partitions to use for writing data (default: 1).
+        /// Note: `CSV` and `GeoJSON` formats only support single partition writes.
+        #[arg(long, value_name = "COUNT")]
+        write_partitions: Option<usize>,
     },
 
     /// Displays information about a vector geospatial dataset.
@@ -116,6 +133,15 @@ enum Commands {
         /// Only used when reading CSV files with WKT geometries.
         #[arg(long, value_name = "TYPE")]
         geometry_type: Option<String>,
+
+        /// Number of rows per batch for processing (default: 8192).
+        #[arg(long, value_name = "SIZE")]
+        batch_size: Option<usize>,
+
+        /// Number of partitions to use for reading data (default: 1).
+        /// Higher values enable parallel reading but require more memory.
+        #[arg(long, value_name = "COUNT")]
+        read_partitions: Option<usize>,
     },
 
     /// Lists all available geospatial drivers and their capabilities.
@@ -174,6 +200,9 @@ async fn main() {
             output_driver,
             geometry_column,
             geometry_type,
+            batch_size,
+            read_partitions,
+            write_partitions,
         } => {
             info!("Converting {input} to {output}");
             handle_convert(
@@ -183,6 +212,9 @@ async fn main() {
                 &output_driver,
                 &geometry_column,
                 geometry_type.as_deref(),
+                batch_size,
+                read_partitions,
+                write_partitions,
             )
             .await
         },
@@ -191,6 +223,8 @@ async fn main() {
             driver,
             geometry_column,
             geometry_type,
+            batch_size,
+            read_partitions,
         } => {
             info!("Displaying info for {input}");
             handle_info(
@@ -198,6 +232,8 @@ async fn main() {
                 &driver,
                 geometry_column.as_deref(),
                 geometry_type.as_deref(),
+                batch_size,
+                read_partitions,
             )
             .await
         },
@@ -219,6 +255,7 @@ async fn main() {
 use geoetl_core::drivers;
 use geoetl_core::operations;
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_convert(
     input: &str,
     output: &str,
@@ -226,6 +263,9 @@ async fn handle_convert(
     output_driver_name: &str,
     geometry_column: &str,
     geometry_type: Option<&str>,
+    batch_size: Option<usize>,
+    read_partitions: Option<usize>,
+    write_partitions: Option<usize>,
 ) -> Result<(), GeoEtlError> {
     info!("Validating convert command:");
     info!("Input: {input}");
@@ -267,6 +307,9 @@ async fn handle_convert(
         &output_driver,
         geometry_column,
         geometry_type,
+        batch_size,
+        read_partitions,
+        write_partitions,
     )
     .await?;
     info!("Conversion complete.");
@@ -278,6 +321,8 @@ async fn handle_info(
     driver_name: &str,
     geometry_column: Option<&str>,
     geometry_type: Option<&str>,
+    batch_size: Option<usize>,
+    read_partitions: Option<usize>,
 ) -> Result<(), GeoEtlError> {
     info!("Info command:");
     info!("Input: {input}");
@@ -335,8 +380,15 @@ async fn handle_info(
     };
 
     // Get dataset information
-    let dataset_info =
-        operations::info(resolved_input, &driver, geometry_col, geometry_type).await?;
+    let dataset_info = operations::info(
+        resolved_input,
+        &driver,
+        geometry_col,
+        geometry_type,
+        batch_size,
+        read_partitions,
+    )
+    .await?;
 
     // Display dataset information using tables
     display_dataset_info(&dataset_info);
@@ -403,6 +455,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_convert_invalid_input_driver() {
+        geoetl_core::init::initialize();
+
         let input_driver_name = "NonExistentDriver";
         let output_driver_name = "GeoJSON";
 
@@ -413,6 +467,9 @@ mod tests {
             output_driver_name,
             "geometry",
             None,
+            None, // batch_size
+            None, // read_partitions
+            None, // write_partitions
         )
         .await;
         assert!(result.is_err());
@@ -426,7 +483,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_convert_input_driver_no_read_support() {
-        let input_driver_name = "GML"; // GML does not support read
+        geoetl_core::init::initialize();
+
+        // With the dynamic registry, unimplemented drivers are not registered at all
+        // so they return NotFound instead of OperationNotSupported
+        let input_driver_name = "GML"; // GML is not implemented
         let output_driver_name = "GeoJSON";
 
         let result = handle_convert(
@@ -436,19 +497,24 @@ mod tests {
             output_driver_name,
             "geometry",
             None,
+            None, // batch_size
+            None, // read_partitions
+            None, // write_partitions
         )
         .await;
         assert!(result.is_err());
         let err = result.unwrap_err();
-        // Check that it's a DriverError::OperationNotSupported
+        // Check that it's a DriverError::NotFound (not in registry)
         assert!(matches!(
             err,
-            GeoEtlError::Driver(error::DriverError::OperationNotSupported { .. })
+            GeoEtlError::Driver(error::DriverError::NotFound { .. })
         ));
     }
 
     #[tokio::test]
     async fn test_handle_convert_invalid_output_driver() {
+        geoetl_core::init::initialize();
+
         let input_driver_name = "CSV";
         let output_driver_name = "NonExistentDriver";
 
@@ -459,6 +525,9 @@ mod tests {
             output_driver_name,
             "geometry",
             None,
+            None, // batch_size
+            None, // read_partitions
+            None, // write_partitions
         )
         .await;
         assert!(result.is_err());
@@ -472,8 +541,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_convert_output_driver_no_write_support() {
+        geoetl_core::init::initialize();
+
+        // With the dynamic registry, unimplemented drivers are not registered at all
+        // so they return NotFound instead of OperationNotSupported
         let input_driver_name = "CSV";
-        let output_driver_name = "GML"; // GML does not support write
+        let output_driver_name = "GML"; // GML is not implemented
 
         let result = handle_convert(
             "input.csv",
@@ -482,14 +555,17 @@ mod tests {
             output_driver_name,
             "geometry",
             None,
+            None, // batch_size
+            None, // read_partitions
+            None, // write_partitions
         )
         .await;
         assert!(result.is_err());
         let err = result.unwrap_err();
-        // Check that it's a DriverError::OperationNotSupported
+        // Check that it's a DriverError::NotFound (not in registry)
         assert!(matches!(
             err,
-            GeoEtlError::Driver(error::DriverError::OperationNotSupported { .. })
+            GeoEtlError::Driver(error::DriverError::NotFound { .. })
         ));
     }
 }

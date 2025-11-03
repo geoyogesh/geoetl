@@ -1,5 +1,6 @@
 //! `GeoJSON` Data Sink implementation for writing data to `GeoJSON` files
 
+use std::io::Write;
 use std::sync::Arc;
 
 use arrow_schema::SchemaRef;
@@ -13,7 +14,7 @@ use datafusion_execution::{SendableRecordBatchStream, TaskContext};
 use datafusion_physical_expr::LexRequirement;
 use futures::StreamExt;
 
-use crate::writer::{GeoJsonWriterOptions, write_geojson};
+use crate::writer::GeoJsonWriterOptions;
 
 /// `GeoJSON` data sink that implements the `DataSink` trait
 #[derive(Debug)]
@@ -64,33 +65,91 @@ impl DataSink for GeoJsonSink {
         mut data: SendableRecordBatchStream,
         _context: &Arc<TaskContext>,
     ) -> Result<u64> {
-        let mut batches = Vec::new();
+        // Get output path from original URL (the file path user specified)
+        let file_path = &self.config.original_url;
+
+        // Create output file
+        let mut file =
+            std::fs::File::create(file_path).map_err(|e| DataFusionError::External(Box::new(e)))?;
+
         let mut row_count = 0u64;
 
-        // Collect all batches from the stream
+        // Write opening of FeatureCollection
+        if self.writer_options.feature_collection {
+            if self.writer_options.pretty_print {
+                file.write_all(b"{\n  \"type\": \"FeatureCollection\",\n  \"features\": [\n")
+                    .map_err(|e| DataFusionError::External(Box::new(e)))?;
+            } else {
+                file.write_all(b"{\"type\":\"FeatureCollection\",\"features\":[")
+                    .map_err(|e| DataFusionError::External(Box::new(e)))?;
+            }
+        }
+
+        let mut first_feature = true;
+
+        // Stream batches and write features incrementally
         while let Some(batch_result) = data.next().await {
             let batch = batch_result?;
             row_count += batch.num_rows() as u64;
-            batches.push(batch);
+
+            // Convert batch to features
+            let features = crate::writer::batch_to_features(&batch, &self.writer_options)?;
+
+            // Write each feature
+            for feature in features {
+                if self.writer_options.feature_collection {
+                    // Write comma separator (except before first feature)
+                    if !first_feature {
+                        file.write_all(b",")
+                            .map_err(|e| DataFusionError::External(Box::new(e)))?;
+                        if self.writer_options.pretty_print {
+                            file.write_all(b"\n")
+                                .map_err(|e| DataFusionError::External(Box::new(e)))?;
+                        }
+                    }
+                    first_feature = false;
+
+                    // Write feature
+                    let json_str = if self.writer_options.pretty_print {
+                        let feature_json = serde_json::to_string_pretty(&feature)
+                            .map_err(|e| DataFusionError::External(Box::new(e)))?;
+                        // Indent the feature JSON
+                        feature_json
+                            .lines()
+                            .map(|line| format!("    {line}"))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    } else {
+                        serde_json::to_string(&feature)
+                            .map_err(|e| DataFusionError::External(Box::new(e)))?
+                    };
+
+                    file.write_all(json_str.as_bytes())
+                        .map_err(|e| DataFusionError::External(Box::new(e)))?;
+                } else {
+                    // Newline-delimited GeoJSON
+                    let geojson = geojson::GeoJson::Feature(feature);
+                    let json_str = serde_json::to_string(&geojson)
+                        .map_err(|e| DataFusionError::External(Box::new(e)))?;
+
+                    file.write_all(json_str.as_bytes())
+                        .map_err(|e| DataFusionError::External(Box::new(e)))?;
+                    file.write_all(b"\n")
+                        .map_err(|e| DataFusionError::External(Box::new(e)))?;
+                }
+            }
         }
 
-        // Write to output - for now write to a single file
-        let output_path = self
-            .config
-            .table_paths
-            .first()
-            .ok_or_else(|| DataFusionError::Internal("No output path specified".to_string()))?;
-
-        let file_path = format!(
-            "{}/data.geojson",
-            <datafusion::datasource::listing::ListingTableUrl as AsRef<str>>::as_ref(output_path)
-        );
-
-        // For now, write to local filesystem
-        let mut file = std::fs::File::create(&file_path)
-            .map_err(|e| DataFusionError::External(Box::new(e)))?;
-
-        write_geojson(&mut file, &batches, &self.writer_options)?;
+        // Write closing of FeatureCollection
+        if self.writer_options.feature_collection {
+            if self.writer_options.pretty_print {
+                file.write_all(b"\n  ]\n}")
+                    .map_err(|e| DataFusionError::External(Box::new(e)))?;
+            } else {
+                file.write_all(b"]}")
+                    .map_err(|e| DataFusionError::External(Box::new(e)))?;
+            }
+        }
 
         Ok(row_count)
     }
@@ -226,5 +285,244 @@ mod tests {
 
         assert_eq!(sink.schema().fields().len(), 3);
         assert_eq!(sink.writer_options().geometry_column_name, "geometry");
+    }
+
+    #[test]
+    fn test_geojson_sink_as_any() {
+        let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)]));
+        let config = FileSinkConfig {
+            original_url: "file:///tmp/output.geojson".to_string(),
+            object_store_url: ObjectStoreUrl::local_filesystem(),
+            file_group: FileGroup::default(),
+            table_paths: vec![ListingTableUrl::parse("file:///tmp").unwrap()],
+            output_schema: schema.clone(),
+            table_partition_cols: vec![],
+            insert_op: InsertOp::Append,
+            keep_partition_by_columns: false,
+            file_extension: "geojson".to_string(),
+        };
+
+        let sink = GeoJsonSink::new(config, GeoJsonWriterOptions::default());
+        assert!(sink.as_any().is::<GeoJsonSink>());
+    }
+
+    #[test]
+    fn test_geojson_sink_metrics() {
+        let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)]));
+        let config = FileSinkConfig {
+            original_url: "file:///tmp/output.geojson".to_string(),
+            object_store_url: ObjectStoreUrl::local_filesystem(),
+            file_group: FileGroup::default(),
+            table_paths: vec![ListingTableUrl::parse("file:///tmp").unwrap()],
+            output_schema: schema.clone(),
+            table_partition_cols: vec![],
+            insert_op: InsertOp::Append,
+            keep_partition_by_columns: false,
+            file_extension: "geojson".to_string(),
+        };
+
+        let sink = GeoJsonSink::new(config, GeoJsonWriterOptions::default());
+        assert!(sink.metrics().is_none());
+    }
+
+    #[test]
+    fn test_geojson_sink_display() {
+        let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)]));
+        let config = FileSinkConfig {
+            original_url: "file:///tmp/output.geojson".to_string(),
+            object_store_url: ObjectStoreUrl::local_filesystem(),
+            file_group: FileGroup::default(),
+            table_paths: vec![ListingTableUrl::parse("file:///tmp").unwrap()],
+            output_schema: schema.clone(),
+            table_partition_cols: vec![],
+            insert_op: InsertOp::Append,
+            keep_partition_by_columns: false,
+            file_extension: "geojson".to_string(),
+        };
+
+        let sink = GeoJsonSink::new(config, GeoJsonWriterOptions::default());
+        assert_eq!(format!("{sink:?}"), format!("{sink:?}"));
+    }
+
+    #[test]
+    fn test_geojson_writer_exec_creation() {
+        use datafusion::physical_plan::empty::EmptyExec;
+
+        let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)]));
+        let config = FileSinkConfig {
+            original_url: "file:///tmp/output.geojson".to_string(),
+            object_store_url: ObjectStoreUrl::local_filesystem(),
+            file_group: FileGroup::default(),
+            table_paths: vec![ListingTableUrl::parse("file:///tmp").unwrap()],
+            output_schema: schema.clone(),
+            table_partition_cols: vec![],
+            insert_op: InsertOp::Append,
+            keep_partition_by_columns: false,
+            file_extension: "geojson".to_string(),
+        };
+
+        let sink = Arc::new(GeoJsonSink::new(config, GeoJsonWriterOptions::default()));
+        let input = Arc::new(EmptyExec::new(schema.clone())) as Arc<dyn ExecutionPlan>;
+        let exec = GeoJsonWriterExec::new(input, sink, None);
+
+        assert_eq!(exec.name(), "GeoJsonWriterExec");
+    }
+
+    #[test]
+    fn test_geojson_writer_exec_as_any() {
+        use datafusion::physical_plan::empty::EmptyExec;
+
+        let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)]));
+        let config = FileSinkConfig {
+            original_url: "file:///tmp/output.geojson".to_string(),
+            object_store_url: ObjectStoreUrl::local_filesystem(),
+            file_group: FileGroup::default(),
+            table_paths: vec![ListingTableUrl::parse("file:///tmp").unwrap()],
+            output_schema: schema.clone(),
+            table_partition_cols: vec![],
+            insert_op: InsertOp::Append,
+            keep_partition_by_columns: false,
+            file_extension: "geojson".to_string(),
+        };
+
+        let sink = Arc::new(GeoJsonSink::new(config, GeoJsonWriterOptions::default()));
+        let input = Arc::new(EmptyExec::new(schema.clone())) as Arc<dyn ExecutionPlan>;
+        let exec = GeoJsonWriterExec::new(input, sink, None);
+
+        assert!(exec.as_any().is::<GeoJsonWriterExec>());
+    }
+
+    #[test]
+    fn test_geojson_writer_exec_children() {
+        use datafusion::physical_plan::empty::EmptyExec;
+
+        let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)]));
+        let config = FileSinkConfig {
+            original_url: "file:///tmp/output.geojson".to_string(),
+            object_store_url: ObjectStoreUrl::local_filesystem(),
+            file_group: FileGroup::default(),
+            table_paths: vec![ListingTableUrl::parse("file:///tmp").unwrap()],
+            output_schema: schema.clone(),
+            table_partition_cols: vec![],
+            insert_op: InsertOp::Append,
+            keep_partition_by_columns: false,
+            file_extension: "geojson".to_string(),
+        };
+
+        let sink = Arc::new(GeoJsonSink::new(config, GeoJsonWriterOptions::default()));
+        let input = Arc::new(EmptyExec::new(schema.clone())) as Arc<dyn ExecutionPlan>;
+        let exec = GeoJsonWriterExec::new(input, sink, None);
+
+        let children = exec.children();
+        assert_eq!(children.len(), 1);
+    }
+
+    #[test]
+    fn test_geojson_writer_exec_with_new_children() {
+        use datafusion::physical_plan::empty::EmptyExec;
+
+        let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)]));
+        let config = FileSinkConfig {
+            original_url: "file:///tmp/output.geojson".to_string(),
+            object_store_url: ObjectStoreUrl::local_filesystem(),
+            file_group: FileGroup::default(),
+            table_paths: vec![ListingTableUrl::parse("file:///tmp").unwrap()],
+            output_schema: schema.clone(),
+            table_partition_cols: vec![],
+            insert_op: InsertOp::Append,
+            keep_partition_by_columns: false,
+            file_extension: "geojson".to_string(),
+        };
+
+        let sink = Arc::new(GeoJsonSink::new(config, GeoJsonWriterOptions::default()));
+        let input = Arc::new(EmptyExec::new(schema.clone())) as Arc<dyn ExecutionPlan>;
+        let exec = Arc::new(GeoJsonWriterExec::new(input.clone(), sink, None));
+
+        // Test with one child
+        let new_exec = exec.clone().with_new_children(vec![input.clone()]).unwrap();
+        assert_eq!(new_exec.children().len(), 1);
+    }
+
+    #[test]
+    fn test_geojson_writer_exec_with_new_children_error() {
+        use datafusion::physical_plan::empty::EmptyExec;
+
+        let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)]));
+        let config = FileSinkConfig {
+            original_url: "file:///tmp/output.geojson".to_string(),
+            object_store_url: ObjectStoreUrl::local_filesystem(),
+            file_group: FileGroup::default(),
+            table_paths: vec![ListingTableUrl::parse("file:///tmp").unwrap()],
+            output_schema: schema.clone(),
+            table_partition_cols: vec![],
+            insert_op: InsertOp::Append,
+            keep_partition_by_columns: false,
+            file_extension: "geojson".to_string(),
+        };
+
+        let sink = Arc::new(GeoJsonSink::new(config, GeoJsonWriterOptions::default()));
+        let input = Arc::new(EmptyExec::new(schema.clone())) as Arc<dyn ExecutionPlan>;
+        let exec = Arc::new(GeoJsonWriterExec::new(input.clone(), sink, None));
+
+        // Test with wrong number of children
+        let result = exec.clone().with_new_children(vec![]);
+        assert!(result.is_err());
+
+        let result = exec
+            .clone()
+            .with_new_children(vec![input.clone(), input.clone()]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_geojson_writer_exec_execute_error() {
+        use datafusion::physical_plan::empty::EmptyExec;
+
+        let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)]));
+        let config = FileSinkConfig {
+            original_url: "file:///tmp/output.geojson".to_string(),
+            object_store_url: ObjectStoreUrl::local_filesystem(),
+            file_group: FileGroup::default(),
+            table_paths: vec![ListingTableUrl::parse("file:///tmp").unwrap()],
+            output_schema: schema.clone(),
+            table_partition_cols: vec![],
+            insert_op: InsertOp::Append,
+            keep_partition_by_columns: false,
+            file_extension: "geojson".to_string(),
+        };
+
+        let sink = Arc::new(GeoJsonSink::new(config, GeoJsonWriterOptions::default()));
+        let input = Arc::new(EmptyExec::new(schema.clone())) as Arc<dyn ExecutionPlan>;
+        let exec = GeoJsonWriterExec::new(input, sink, None);
+
+        let context = Arc::new(TaskContext::default());
+
+        // Test with invalid partition
+        let result = exec.execute(1, context);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_geojson_writer_exec_display() {
+        use datafusion::physical_plan::empty::EmptyExec;
+
+        let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)]));
+        let config = FileSinkConfig {
+            original_url: "file:///tmp/output.geojson".to_string(),
+            object_store_url: ObjectStoreUrl::local_filesystem(),
+            file_group: FileGroup::default(),
+            table_paths: vec![ListingTableUrl::parse("file:///tmp").unwrap()],
+            output_schema: schema.clone(),
+            table_partition_cols: vec![],
+            insert_op: InsertOp::Append,
+            keep_partition_by_columns: false,
+            file_extension: "geojson".to_string(),
+        };
+
+        let sink = Arc::new(GeoJsonSink::new(config, GeoJsonWriterOptions::default()));
+        let input = Arc::new(EmptyExec::new(schema.clone())) as Arc<dyn ExecutionPlan>;
+        let exec = GeoJsonWriterExec::new(input, sink, None);
+
+        assert_eq!(format!("{exec}"), "GeoJsonWriterExec");
     }
 }

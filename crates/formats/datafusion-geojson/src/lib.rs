@@ -1,3 +1,4 @@
+mod decoder;
 pub mod factory;
 mod file_format;
 mod file_source;

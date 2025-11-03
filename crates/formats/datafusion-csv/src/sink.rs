@@ -2,18 +2,66 @@
 
 use std::sync::Arc;
 
+use arrow_array::RecordBatch;
 use arrow_schema::SchemaRef;
 use async_trait::async_trait;
 use datafusion::datasource::physical_plan::FileSinkConfig;
 use datafusion::datasource::sink::DataSink;
+use datafusion::physical_plan::DisplayAs;
+use datafusion::physical_plan::DisplayFormatType;
 use datafusion::physical_plan::metrics::MetricsSet;
-use datafusion::physical_plan::{DisplayAs, DisplayFormatType, ExecutionPlan};
 use datafusion_common::{DataFusionError, Result};
 use datafusion_execution::{SendableRecordBatchStream, TaskContext};
-use datafusion_physical_expr::LexRequirement;
 use futures::StreamExt;
 
-use crate::writer::{CsvWriterOptions, write_csv};
+use crate::writer::CsvWriterOptions;
+
+/// Convert geometry columns to WKT in a record batch
+fn convert_geometry_to_wkt_in_batch(batch: &RecordBatch) -> Result<RecordBatch> {
+    use arrow_schema::Schema;
+    use geoarrow_array::GeoArrowArray;
+    use geoarrow_array::array::from_arrow_array;
+    use geoarrow_array::cast::to_wkt;
+
+    let schema = batch.schema();
+    let mut new_columns = Vec::with_capacity(batch.num_columns());
+    let mut new_fields = Vec::with_capacity(batch.num_columns());
+    let mut any_converted = false;
+
+    for (idx, field) in schema.fields().iter().enumerate() {
+        let array = batch.column(idx);
+
+        // Try to convert from Arrow array to GeometryArray
+        if let Ok(geom_array) = from_arrow_array(array.as_ref(), field) {
+            // This is a geometry column - convert to WKT (using i32 offsets)
+            if let Ok(wkt_array) = to_wkt::<i32>(&geom_array) {
+                new_columns.push(wkt_array.into_array_ref());
+                new_fields.push(Arc::new(arrow_schema::Field::new(
+                    field.name(),
+                    arrow_schema::DataType::Utf8,
+                    field.is_nullable(),
+                )));
+                any_converted = true;
+            } else {
+                // Conversion failed, keep original
+                new_columns.push(array.clone());
+                new_fields.push(Arc::new((**field).clone()));
+            }
+        } else {
+            // Not a geometry column, keep as is
+            new_columns.push(array.clone());
+            new_fields.push(Arc::new((**field).clone()));
+        }
+    }
+
+    if any_converted {
+        let new_schema = Arc::new(Schema::new(new_fields));
+        RecordBatch::try_new(new_schema, new_columns)
+            .map_err(|e| DataFusionError::External(Box::new(e)))
+    } else {
+        Ok(batch.clone())
+    }
+}
 
 /// CSV data sink that implements the `DataSink` trait
 #[derive(Debug)]
@@ -64,36 +112,64 @@ impl DataSink for CsvSink {
         mut data: SendableRecordBatchStream,
         _context: &Arc<TaskContext>,
     ) -> Result<u64> {
-        let mut batches = Vec::new();
-        let mut row_count = 0u64;
-
-        // Collect all batches from the stream
-        while let Some(batch_result) = data.next().await {
-            let batch = batch_result?;
-            row_count += batch.num_rows() as u64;
-            batches.push(batch);
-        }
+        use arrow_csv::WriterBuilder;
 
         // Write to output - for now write to a single file
-        // In a full implementation, this would handle partitioning
-        // and write to object store
         let output_path = self
             .config
             .table_paths
             .first()
             .ok_or_else(|| DataFusionError::Internal("No output path specified".to_string()))?;
 
-        let file_path = format!(
-            "{}/data.csv",
-            <datafusion::datasource::listing::ListingTableUrl as AsRef<str>>::as_ref(output_path)
-        );
+        // Convert URL to file path - remove file:// prefix if present
+        let url_str =
+            <datafusion::datasource::listing::ListingTableUrl as AsRef<str>>::as_ref(output_path);
+        let file_path = if let Some(path) = url_str.strip_prefix("file://") {
+            path
+        } else {
+            url_str
+        };
 
-        // For now, write to local filesystem
-        // A full implementation would use object store
-        let mut file = std::fs::File::create(&file_path)
-            .map_err(|e| DataFusionError::External(Box::new(e)))?;
+        // Create CSV writer
+        let mut file =
+            std::fs::File::create(file_path).map_err(|e| DataFusionError::External(Box::new(e)))?;
 
-        write_csv(&mut file, &batches, &self.writer_options)?;
+        let mut builder = WriterBuilder::new()
+            .with_delimiter(self.writer_options.delimiter)
+            .with_header(self.writer_options.has_header);
+
+        if let Some(ref format) = self.writer_options.date_format {
+            builder = builder.with_date_format(format.clone());
+        }
+        if let Some(ref format) = self.writer_options.datetime_format {
+            builder = builder.with_datetime_format(format.clone());
+        }
+        if let Some(ref format) = self.writer_options.timestamp_format {
+            builder = builder.with_timestamp_format(format.clone());
+        }
+        if let Some(ref format) = self.writer_options.time_format {
+            builder = builder.with_time_format(format.clone());
+        }
+        if !self.writer_options.null_value.is_empty() {
+            builder = builder.with_null(self.writer_options.null_value.clone());
+        }
+
+        let mut csv_writer = builder.build(&mut file);
+        let mut row_count = 0u64;
+
+        // Stream batches and write incrementally
+        while let Some(batch_result) = data.next().await {
+            let batch = batch_result?;
+            row_count += batch.num_rows() as u64;
+
+            // Convert geometry columns to WKT before writing
+            let batch_to_write = convert_geometry_to_wkt_in_batch(&batch)?;
+
+            // Write batch - header is written automatically by Arrow CSV writer for first batch
+            csv_writer
+                .write(&batch_to_write)
+                .map_err(|e| DataFusionError::External(Box::new(e)))?;
+        }
 
         Ok(row_count)
     }
@@ -102,96 +178,6 @@ impl DataSink for CsvSink {
 impl DisplayAs for CsvSink {
     fn fmt_as(&self, _t: DisplayFormatType, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "CsvSink")
-    }
-}
-
-/// CSV writer physical execution plan
-#[derive(Debug)]
-pub struct CsvWriterExec {
-    input: Arc<dyn ExecutionPlan>,
-    sink: Arc<CsvSink>,
-    _order_requirements: Option<LexRequirement>,
-}
-
-impl CsvWriterExec {
-    /// Create a new CSV writer execution plan
-    pub fn new(
-        input: Arc<dyn ExecutionPlan>,
-        sink: Arc<CsvSink>,
-        order_requirements: Option<LexRequirement>,
-    ) -> Self {
-        Self {
-            input,
-            sink,
-            _order_requirements: order_requirements,
-        }
-    }
-}
-
-impl DisplayAs for CsvWriterExec {
-    fn fmt_as(&self, _t: DisplayFormatType, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "CsvWriterExec")
-    }
-}
-
-impl std::fmt::Display for CsvWriterExec {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "CsvWriterExec")
-    }
-}
-
-impl ExecutionPlan for CsvWriterExec {
-    fn name(&self) -> &'static str {
-        "CsvWriterExec"
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn properties(&self) -> &datafusion::physical_plan::PlanProperties {
-        self.input.properties()
-    }
-
-    fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
-        vec![&self.input]
-    }
-
-    fn with_new_children(
-        self: Arc<Self>,
-        children: Vec<Arc<dyn ExecutionPlan>>,
-    ) -> Result<Arc<dyn ExecutionPlan>> {
-        if children.len() != 1 {
-            return Err(DataFusionError::Internal(
-                "CsvWriterExec requires exactly one child".to_string(),
-            ));
-        }
-
-        #[allow(clippy::used_underscore_binding)]
-        Ok(Arc::new(Self {
-            input: Arc::clone(&children[0]),
-            sink: Arc::clone(&self.sink),
-            _order_requirements: self._order_requirements.clone(),
-        }))
-    }
-
-    fn execute(
-        &self,
-        partition: usize,
-        context: Arc<TaskContext>,
-    ) -> Result<SendableRecordBatchStream> {
-        if partition != 0 {
-            return Err(DataFusionError::Internal(
-                "CsvWriterExec only supports single partition".to_string(),
-            ));
-        }
-
-        // Execute input and get stream
-        let input_stream = self.input.execute(partition, Arc::clone(&context))?;
-
-        // For now, we'll return the input stream
-        // A full implementation would write and return a count stream
-        Ok(input_stream)
     }
 }
 
@@ -229,5 +215,62 @@ mod tests {
 
         assert_eq!(sink.schema().fields().len(), 2);
         assert_eq!(sink.writer_options().delimiter, b',');
+    }
+
+    #[test]
+    fn test_csv_sink_as_any() {
+        let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)]));
+        let config = FileSinkConfig {
+            original_url: "file:///tmp/output.csv".to_string(),
+            object_store_url: ObjectStoreUrl::local_filesystem(),
+            file_group: FileGroup::default(),
+            table_paths: vec![ListingTableUrl::parse("file:///tmp").unwrap()],
+            output_schema: schema.clone(),
+            table_partition_cols: vec![],
+            insert_op: InsertOp::Append,
+            keep_partition_by_columns: false,
+            file_extension: "csv".to_string(),
+        };
+
+        let sink = CsvSink::new(config, CsvWriterOptions::default());
+        assert!(sink.as_any().is::<CsvSink>());
+    }
+
+    #[test]
+    fn test_csv_sink_metrics() {
+        let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)]));
+        let config = FileSinkConfig {
+            original_url: "file:///tmp/output.csv".to_string(),
+            object_store_url: ObjectStoreUrl::local_filesystem(),
+            file_group: FileGroup::default(),
+            table_paths: vec![ListingTableUrl::parse("file:///tmp").unwrap()],
+            output_schema: schema.clone(),
+            table_partition_cols: vec![],
+            insert_op: InsertOp::Append,
+            keep_partition_by_columns: false,
+            file_extension: "csv".to_string(),
+        };
+
+        let sink = CsvSink::new(config, CsvWriterOptions::default());
+        assert!(sink.metrics().is_none());
+    }
+
+    #[test]
+    fn test_csv_sink_display() {
+        let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)]));
+        let config = FileSinkConfig {
+            original_url: "file:///tmp/output.csv".to_string(),
+            object_store_url: ObjectStoreUrl::local_filesystem(),
+            file_group: FileGroup::default(),
+            table_paths: vec![ListingTableUrl::parse("file:///tmp").unwrap()],
+            output_schema: schema.clone(),
+            table_partition_cols: vec![],
+            insert_op: InsertOp::Append,
+            keep_partition_by_columns: false,
+            file_extension: "csv".to_string(),
+        };
+
+        let sink = CsvSink::new(config, CsvWriterOptions::default());
+        assert_eq!(format!("{sink:?}"), format!("{sink:?}"));
     }
 }

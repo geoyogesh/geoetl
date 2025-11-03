@@ -33,6 +33,23 @@ pub trait FormatFactory: Send + Sync {
     ///
     /// Returns `None` if writing is not supported by this format.
     fn create_writer(&self) -> Option<Arc<dyn DataWriter>>;
+
+    /// Creates a `DataFusion` `FileFormat` for streaming execution.
+    ///
+    /// Returns `None` if streaming execution is not supported by this format.
+    /// This enables memory-efficient processing of large datasets via `DataFusion`'s
+    /// `DataSink` mechanism.
+    ///
+    /// # Arguments
+    ///
+    /// * `geometry_column` - Name of the geometry column
+    fn create_file_format(
+        &self,
+        _geometry_column: &str,
+    ) -> Option<Arc<dyn datafusion::datasource::file_format::FileFormat>> {
+        // Default implementation returns None (streaming not supported)
+        None
+    }
 }
 
 /// Global registry of format factories.

@@ -4,13 +4,11 @@
 //! operations on geospatial data, leveraging the driver registry for format support.
 
 use crate::drivers::Driver;
-use crate::error::{self, DriverError, GeoEtlError, IoErrorExt};
+use crate::error::{self, DriverError, GeoEtlError};
 use crate::types::{DatasetInfo, FieldInfo, GeometryColumnInfo};
 use crate::utils::ArrowDataTypeExt;
-use datafusion::arrow::array::RecordBatch;
 use datafusion::prelude::SessionContext;
-use log::info;
-use std::fs::File;
+use log::{info, warn};
 
 // Type alias for backward compatibility during migration
 type Result<T> = std::result::Result<T, GeoEtlError>;
@@ -27,6 +25,7 @@ type Result<T> = std::result::Result<T, GeoEtlError>;
 /// * `driver` - The driver responsible for reading the format
 /// * `geometry_column` - Name of the geometry column (for CSV)
 /// * `geometry_type` - Optional geometry type hint (for CSV)
+/// * `batch_size` - Number of rows per batch for processing
 ///
 /// # Returns
 ///
@@ -42,8 +41,17 @@ async fn initialize_context(
     driver: &Driver,
     geometry_column: &str,
     geometry_type: Option<&str>,
+    batch_size: usize,
+    read_partitions: usize,
 ) -> Result<SessionContext> {
-    let ctx = SessionContext::new();
+    use datafusion::prelude::SessionConfig;
+
+    // Optimize for throughput with configurable parallel processing
+    let config = SessionConfig::new()
+        .with_target_partitions(read_partitions)
+        .with_batch_size(batch_size);
+
+    let ctx = SessionContext::new_with_config(config);
     let table_name = "dataset";
     register_catalog(
         &ctx,
@@ -52,6 +60,7 @@ async fn initialize_context(
         table_name,
         geometry_column,
         geometry_type,
+        batch_size,
     )
     .await?;
     Ok(ctx)
@@ -67,6 +76,7 @@ async fn initialize_context(
 /// * `driver_name` - The short name of the driver (e.g., "`CSV`", "`GeoJSON`")
 /// * `geometry_column` - Name of the geometry column (used for CSV)
 /// * `geometry_type` - Optional geometry type hint (used for CSV)
+/// * `batch_size` - Number of rows per batch for processing
 ///
 /// # Returns
 ///
@@ -75,6 +85,7 @@ fn prepare_reader_options(
     driver_name: &str,
     geometry_column: &str,
     geometry_type: Option<&str>,
+    batch_size: usize,
 ) -> Result<Box<dyn std::any::Any + Send>> {
     match driver_name {
         "CSV" => {
@@ -86,7 +97,8 @@ fn prepare_reader_options(
         },
         "GeoJSON" => {
             use datafusion_geojson::GeoJsonFormatOptions;
-            Ok(Box::new(GeoJsonFormatOptions::default()))
+            let options = GeoJsonFormatOptions::default().with_batch_size(batch_size);
+            Ok(Box::new(options))
         },
         _ => Err(DriverError::NotRegistered {
             driver: driver_name.to_string(),
@@ -109,6 +121,7 @@ fn prepare_reader_options(
 /// * `table_name` - Name to register the table as
 /// * `geometry_column` - Name of the geometry column (for CSV)
 /// * `geometry_type` - Optional geometry type hint (for CSV)
+/// * `batch_size` - Number of rows per batch for processing
 ///
 /// # Returns
 ///
@@ -120,6 +133,7 @@ async fn register_catalog(
     table_name: &str,
     geometry_column: &str,
     geometry_type: Option<&str>,
+    batch_size: usize,
 ) -> Result<()> {
     // Get factory from global registry
     let registry = geoetl_core_common::driver_registry();
@@ -139,7 +153,12 @@ async fn register_catalog(
         })?;
 
     // Prepare format-specific options
-    let options = prepare_reader_options(driver.short_name, geometry_column, geometry_type)?;
+    let options = prepare_reader_options(
+        driver.short_name,
+        geometry_column,
+        geometry_type,
+        batch_size,
+    )?;
 
     // Use polymorphic dispatch - no switch statement needed!
     let table = reader
@@ -196,100 +215,8 @@ fn parse_geometry_type(geom_type_str: &str) -> Result<geoarrow_schema::GeoArrowT
     Ok(geoarrow_type)
 }
 
-/// Write data to CSV file
-fn write_csv(output: &str, batches: &[RecordBatch], geometry_column: &str) -> Result<()> {
-    use datafusion_csv::{CsvWriterOptions, write_csv};
-    info!("Writing CSV file: {output}");
-
-    // Convert geometry columns to WKT before writing
-    let converted_batches = convert_geometry_to_wkt(batches, geometry_column)?;
-
-    let mut output_file = File::create(output)
-        .map_err(|e| GeoEtlError::from(anyhow::anyhow!("Failed to create output file: {e}")))?;
-    let options = CsvWriterOptions::default();
-    write_csv(&mut output_file, &converted_batches, &options)
-        .map_err(|e| GeoEtlError::from(anyhow::anyhow!("Failed to write CSV file: {e}")))
-}
-
-/// Convert geometry columns to WKT format for CSV writing
-fn convert_geometry_to_wkt(
-    batches: &[RecordBatch],
-    geometry_column: &str,
-) -> Result<Vec<RecordBatch>> {
-    use arrow_schema::Schema;
-    use geoarrow_array::GeoArrowArray;
-    use geoarrow_array::array::from_arrow_array;
-    use geoarrow_array::cast::to_wkt;
-    use std::sync::Arc;
-
-    let mut converted_batches = Vec::with_capacity(batches.len());
-
-    for batch in batches {
-        let schema = batch.schema();
-
-        // Find the geometry column index
-        let geom_idx = schema
-            .fields()
-            .iter()
-            .position(|field| field.name() == geometry_column);
-
-        if let Some(idx) = geom_idx {
-            // Get the geometry column and its field
-            let geom_array = batch.column(idx);
-            let geom_field = schema.field(idx);
-
-            // Convert Arrow array to GeoArrowArray
-            let geoarrow_array =
-                from_arrow_array(geom_array.as_ref(), geom_field).map_err(|e| {
-                    GeoEtlError::from(anyhow::anyhow!("Failed to convert to GeoArrowArray: {e}"))
-                })?;
-
-            // Convert to WKT using geoarrow cast (using i32 offset)
-            let wkt_array: geoarrow_array::array::WktArray =
-                to_wkt(&geoarrow_array).map_err(|e| {
-                    GeoEtlError::from(anyhow::anyhow!("Failed to convert geometry to WKT: {e}"))
-                })?;
-
-            // Create new schema with WKT column
-            let mut new_fields = schema.fields().to_vec();
-            new_fields[idx] = Arc::new(arrow_schema::Field::new(
-                geometry_column,
-                arrow_schema::DataType::Utf8,
-                true,
-            ));
-            let new_schema = Arc::new(Schema::new(new_fields));
-
-            // Create new columns with WKT
-            let mut new_columns = batch.columns().to_vec();
-            new_columns[idx] = wkt_array.to_array_ref();
-
-            // Create new batch
-            let new_batch = RecordBatch::try_new(new_schema, new_columns).map_err(|e| {
-                GeoEtlError::from(anyhow::anyhow!(
-                    "Failed to create record batch with WKT: {e}"
-                ))
-            })?;
-
-            converted_batches.push(new_batch);
-        } else {
-            // No geometry column found, use batch as-is
-            converted_batches.push(batch.clone());
-        }
-    }
-
-    Ok(converted_batches)
-}
-
-/// Write data to `GeoJSON` file
-fn write_geojson(output: &str, batches: &[RecordBatch]) -> Result<()> {
-    use datafusion_geojson::{GeoJsonWriterOptions, write_geojson};
-    info!("Writing GeoJSON file: {output}");
-    let mut output_file = File::create(output)
-        .map_err(|e| GeoEtlError::from(anyhow::anyhow!("Failed to create output file: {e}")))?;
-    let options = GeoJsonWriterOptions::default();
-    write_geojson(&mut output_file, batches, &options)
-        .map_err(|e| GeoEtlError::from(anyhow::anyhow!("Failed to write GeoJSON file: {e}")))
-}
+// Note: write_with_driver was removed as it's no longer used.
+// All writing now goes through streaming execution via DataSink.
 
 /// Performs a geospatial data conversion from an input format to an output format.
 ///
@@ -304,6 +231,9 @@ fn write_geojson(output: &str, batches: &[RecordBatch]) -> Result<()> {
 /// * `output_driver` - The driver responsible for writing the output format.
 /// * `geometry_column` - Name of the geometry column (for CSV)
 /// * `geometry_type` - Optional geometry type hint (for CSV)
+/// * `batch_size` - Number of rows per batch for processing (default: 8192)
+/// * `read_partitions` - Number of partitions for reading (default: 1)
+/// * `write_partitions` - Number of partitions for writing (default: 1, overridden by format)
 ///
 /// # Returns
 ///
@@ -319,6 +249,7 @@ fn write_geojson(output: &str, batches: &[RecordBatch]) -> Result<()> {
 /// # Note
 ///
 /// Driver capability validation should be performed by the caller before invoking this function.
+#[allow(clippy::too_many_arguments)]
 pub async fn convert(
     input: &str,
     output: &str,
@@ -326,41 +257,127 @@ pub async fn convert(
     output_driver: &Driver,
     geometry_column: &str,
     geometry_type: Option<&str>,
+    batch_size: Option<usize>,
+    read_partitions: Option<usize>,
+    write_partitions: Option<usize>,
 ) -> Result<()> {
+    use datafusion::datasource::physical_plan::{FileGroup, FileSinkConfig};
+    use datafusion::logical_expr::dml::InsertOp;
+    use datafusion::physical_plan::collect;
+
+    let batch_size = batch_size.unwrap_or(8192); // Default to standard DataFusion batch size
+    let read_partitions = read_partitions.unwrap_or(1); // Default to single partition
+    let mut write_partitions = write_partitions.unwrap_or(1); // Default to single partition
+
+    // CSV and GeoJSON only support single-partition writes
+    if matches!(output_driver.short_name, "CSV" | "GeoJSON") && write_partitions > 1 {
+        warn!(
+            "{} format only supports single-partition writes. Overriding write_partitions from {} to 1.",
+            output_driver.short_name, write_partitions
+        );
+        write_partitions = 1;
+    }
+
     info!("Starting conversion:");
-    info!("Input: {} (Driver: {})", input, input_driver.short_name);
-    info!("Output: {} (Driver: {})", output, output_driver.short_name);
+    info!("Input: {input} (Driver: {})", input_driver.short_name);
+    info!("Output: {output} (Driver: {})", output_driver.short_name);
+    info!("Batch size: {batch_size}");
+    info!("Read partitions: {read_partitions}");
+    info!("Write partitions: {write_partitions}");
 
     // Initialize context and register dataset
-    let ctx = initialize_context(input, input_driver, geometry_column, geometry_type).await?;
+    let ctx = initialize_context(
+        input,
+        input_driver,
+        geometry_column,
+        geometry_type,
+        batch_size,
+        read_partitions,
+    )
+    .await?;
 
-    // Collect batches from the registered table
+    // Get the table
     let table = ctx
         .table("dataset")
         .await
         .map_err(|e| GeoEtlError::from(anyhow::anyhow!("Failed to get table: {e}")))?;
-    let batches = table
-        .collect()
+
+    // Use streaming execution via DataSink - NO fallback!
+    let registry = geoetl_core_common::driver_registry();
+    let factory = registry
+        .find_factory(output_driver.short_name)
+        .ok_or_else(|| {
+            GeoEtlError::Io(error::IoError::Write {
+                format: output_driver.short_name.to_string(),
+                path: output.into(),
+                source: Box::new(GeoEtlError::Driver(DriverError::NotRegistered {
+                    driver: output_driver.short_name.to_string(),
+                })),
+            })
+        })?;
+
+    let file_format = factory.create_file_format(geometry_column).ok_or_else(|| {
+        GeoEtlError::from(anyhow::anyhow!(
+            "Streaming not supported for driver: {}",
+            output_driver.short_name
+        ))
+    })?;
+
+    info!("Using streaming execution via DataSink");
+
+    // Get the logical plan from the table
+    let logical_plan = table
+        .into_optimized_plan()
+        .map_err(|e| GeoEtlError::from(anyhow::anyhow!("Failed to create logical plan: {e}")))?;
+
+    // Create physical plan
+    let state = ctx.state();
+    let physical_plan = state
+        .create_physical_plan(&logical_plan)
         .await
-        .map_err(|e| GeoEtlError::from(anyhow::anyhow!("Failed to collect data: {e}")))?;
+        .map_err(|e| GeoEtlError::from(anyhow::anyhow!("Failed to create physical plan: {e}")))?;
 
-    info!("Read {} record batch(es)", batches.len());
-    let total_rows: usize = batches.iter().map(RecordBatch::num_rows).sum();
-    info!("Total rows: {total_rows}");
+    // Parse output path
+    let table_path = datafusion::datasource::listing::ListingTableUrl::parse(output)
+        .map_err(|e| GeoEtlError::from(anyhow::anyhow!("Invalid output path: {e}")))?;
 
-    // Write data based on output driver
-    match output_driver.short_name {
-        "CSV" => write_csv(output, &batches, geometry_column).with_write_context("CSV", output)?,
-        "GeoJSON" => write_geojson(output, &batches).with_write_context("GeoJSON", output)?,
-        _ => {
-            return Err(DriverError::NotRegistered {
-                driver: output_driver.short_name.to_string(),
-            }
-            .into());
-        },
+    // Create FileSinkConfig
+    let config = FileSinkConfig {
+        original_url: output.to_string(),
+        object_store_url: table_path.object_store(),
+        file_group: FileGroup::default(),
+        table_paths: vec![table_path],
+        output_schema: physical_plan.schema(),
+        table_partition_cols: vec![],
+        insert_op: InsertOp::Append,
+        keep_partition_by_columns: false,
+        file_extension: output_driver.short_name.to_lowercase(),
+    };
+
+    // Create the writer plan using the file format
+    let writer_plan = file_format
+        .create_writer_physical_plan(physical_plan, &state, config, None)
+        .await
+        .map_err(|e| GeoEtlError::from(anyhow::anyhow!("Failed to create writer plan: {e}")))?;
+
+    // Execute the writer plan (streams data through DataSink without collecting)
+    let result = collect(writer_plan, state.task_ctx()).await.map_err(|e| {
+        GeoEtlError::from(anyhow::anyhow!("Failed to execute streaming writer: {e}"))
+    })?;
+
+    // Extract row count from result
+    if let Some(batch) = result.first()
+        && batch.num_columns() > 0
+        && let Some(count_array) = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<datafusion::arrow::array::UInt64Array>()
+    {
+        let total_rows = count_array.value(0);
+        info!("Total rows written: {total_rows}");
     }
 
-    info!("Conversion completed successfully");
+    info!("Conversion completed successfully using streaming execution");
     Ok(())
 }
 
@@ -377,6 +394,8 @@ pub async fn convert(
 /// * `input_driver` - The driver responsible for reading the input format.
 /// * `geometry_column` - Name of the geometry column (for CSV)
 /// * `geometry_type` - Optional geometry type hint (for CSV)
+/// * `batch_size` - Number of rows per batch for processing (default: 8192)
+/// * `read_partitions` - Number of partitions for reading (default: 1)
 ///
 /// # Returns
 ///
@@ -396,12 +415,27 @@ pub async fn info(
     input_driver: &Driver,
     geometry_column: &str,
     geometry_type: Option<&str>,
+    batch_size: Option<usize>,
+    read_partitions: Option<usize>,
 ) -> Result<DatasetInfo> {
+    let batch_size = batch_size.unwrap_or(8192); // Default to standard DataFusion batch size
+    let read_partitions = read_partitions.unwrap_or(1); // Default to single partition
+
     info!("Reading dataset information:");
-    info!("Input: {} (Driver: {})", input, input_driver.short_name);
+    info!("Input: {input} (Driver: {})", input_driver.short_name);
+    info!("Batch size: {batch_size}");
+    info!("Read partitions: {read_partitions}");
 
     // Initialize context and register dataset
-    let ctx = initialize_context(input, input_driver, geometry_column, geometry_type).await?;
+    let ctx = initialize_context(
+        input,
+        input_driver,
+        geometry_column,
+        geometry_type,
+        batch_size,
+        read_partitions,
+    )
+    .await?;
 
     // Build dataset info using context
     let dataset_info =
@@ -561,6 +595,9 @@ mod tests {
             &output_driver,
             "wkt",
             None,
+            None, // batch_size
+            None, // read_partitions
+            None, // write_partitions
         )
         .await;
 
@@ -611,6 +648,9 @@ mod tests {
             &output_driver,
             "geometry",
             None,
+            None, // batch_size
+            None, // read_partitions
+            None, // write_partitions
         )
         .await;
 
@@ -653,6 +693,9 @@ mod tests {
             &output_driver,
             "geometry",
             None,
+            None, // batch_size
+            None, // read_partitions
+            None, // write_partitions
         )
         .await;
         assert!(result.is_err());
@@ -692,15 +735,31 @@ mod tests {
             &output_driver,
             "geometry",
             None,
+            None, // batch_size
+            None, // read_partitions
+            None, // write_partitions
         )
         .await;
         assert!(result.is_err());
         let err = result.unwrap_err();
-        // Check that it's a DriverError::NotRegistered for GML
-        assert!(matches!(
-            err,
-            GeoEtlError::Driver(DriverError::NotRegistered { .. })
-        ));
+        // After refactoring, unregistered drivers produce an IoError with NotRegistered as source
+        // This provides better context about what operation failed
+        match &err {
+            GeoEtlError::Io(error::IoError::Write { source, .. }) => {
+                // The source should be the original DriverError::NotRegistered
+                // We need to downcast to check the concrete error type
+                let source_err = source.downcast_ref::<GeoEtlError>();
+                assert!(source_err.is_some(), "Source should be a GeoEtlError");
+                assert!(
+                    matches!(
+                        source_err.unwrap(),
+                        GeoEtlError::Driver(DriverError::NotRegistered { .. })
+                    ),
+                    "Source should be DriverError::NotRegistered"
+                );
+            },
+            _ => panic!("Expected IoError::Write, got: {err:?}"),
+        }
         assert!(err.to_string().contains("GML"));
         Ok(())
     }
@@ -742,6 +801,9 @@ mod tests {
             &output_driver,
             "geometry",
             None,
+            None, // batch_size
+            None, // read_partitions
+            None, // write_partitions
         )
         .await;
 
@@ -784,6 +846,9 @@ mod tests {
             &output_driver,
             "geometry",
             None,
+            None, // batch_size
+            None, // read_partitions
+            None, // write_partitions
         )
         .await;
 
@@ -832,6 +897,9 @@ mod tests {
             &output_driver,
             "wkt",
             None,
+            None, // batch_size
+            None, // read_partitions
+            None, // write_partitions
         )
         .await;
 

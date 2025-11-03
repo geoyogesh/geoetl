@@ -235,6 +235,7 @@ impl FileFormat for CsvFormat {
         order_requirements: Option<datafusion_physical_expr::LexRequirement>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
         use datafusion::logical_expr::dml::InsertOp;
+        use datafusion_datasource::sink::DataSinkExec;
 
         if conf.insert_op != InsertOp::Append {
             return Err(datafusion_common::DataFusionError::NotImplemented(
@@ -250,12 +251,8 @@ impl FileFormat for CsvFormat {
         // Create the sink
         let sink = Arc::new(crate::sink::CsvSink::new(conf, writer_options));
 
-        // Create the writer execution plan
-        Ok(Arc::new(crate::sink::CsvWriterExec::new(
-            input,
-            sink,
-            order_requirements,
-        )))
+        // Create the writer execution plan using DataSinkExec
+        Ok(Arc::new(DataSinkExec::new(input, sink, order_requirements)))
     }
 }
 

@@ -6,8 +6,7 @@ use arrow_array::{Array, RecordBatch};
 use arrow_schema::DataType;
 use datafusion_common::{DataFusionError, Result};
 use geoarrow_array::{GeoArrowArray, GeoArrowArrayAccessor};
-use geojson::{Feature, FeatureCollection, GeoJson, JsonObject, JsonValue};
-use geozero::ToJson;
+use geojson::{Feature, GeoJson, JsonObject, JsonValue};
 
 /// Options for `GeoJSON` writing
 #[derive(Debug, Clone)]
@@ -67,6 +66,7 @@ fn geoarrow_to_geojson_geometry(
     row_idx: usize,
 ) -> Result<Option<geojson::Geometry>> {
     use geoarrow_array::array::GeometryArray;
+    use geozero::ToJson;
 
     // Try to convert from Arrow array to GeometryArray (supports all geometry types)
     let geometry_array_result = GeometryArray::try_from((geom_array, geom_field));
@@ -83,7 +83,6 @@ fn geoarrow_to_geojson_geometry(
                 .value(row_idx)
                 .map_err(|e| DataFusionError::External(Box::new(e)))?;
 
-            // Convert to GeoJSON string using geozero's ToJson trait
             let geojson_string = geom
                 .to_json()
                 .map_err(|e| DataFusionError::External(Box::new(e)))?;
@@ -238,62 +237,136 @@ pub fn batch_to_features(
     Ok(features)
 }
 
-/// Write record batches to `GeoJSON` format
+/// Write record batches to `GeoJSON` format (streaming version)
+///
+/// This function writes batches incrementally without accumulating all features in memory.
+/// For `FeatureCollection` format, it writes the opening, streams features, then writes the closing.
 ///
 /// # Errors
 ///
 /// Returns an error if writing to the output fails or if `GeoJSON` serialization fails
-pub fn write_geojson<W: IoWrite>(
+pub fn write_geojson_streaming<W: IoWrite>(
     writer: &mut W,
     batches: &[RecordBatch],
     options: &GeoJsonWriterOptions,
 ) -> Result<()> {
     if batches.is_empty() {
-        return Ok(());
-    }
-
-    let mut all_features = Vec::new();
-
-    for batch in batches {
-        let features = batch_to_features(batch, options)?;
-        all_features.extend(features);
-    }
-
-    if options.feature_collection {
-        let collection = FeatureCollection {
-            bbox: None,
-            features: all_features,
-            foreign_members: None,
-        };
-
-        let geojson = GeoJson::FeatureCollection(collection);
-        let json_str = if options.pretty_print {
-            serde_json::to_string_pretty(&geojson)
-        } else {
-            serde_json::to_string(&geojson)
-        }
-        .map_err(|e| DataFusionError::External(Box::new(e)))?;
-
-        writer
-            .write_all(json_str.as_bytes())
-            .map_err(|e| DataFusionError::External(Box::new(e)))?;
-    } else {
-        // Newline-delimited GeoJSON
-        for feature in all_features {
-            let geojson = GeoJson::Feature(feature);
-            let json_str = serde_json::to_string(&geojson)
-                .map_err(|e| DataFusionError::External(Box::new(e)))?;
-
+        // Write empty FeatureCollection if needed
+        if options.feature_collection {
+            let json_str = if options.pretty_print {
+                "{\n  \"type\": \"FeatureCollection\",\n  \"features\": []\n}"
+            } else {
+                "{\"type\":\"FeatureCollection\",\"features\":[]}"
+            };
             writer
                 .write_all(json_str.as_bytes())
                 .map_err(|e| DataFusionError::External(Box::new(e)))?;
+        }
+        return Ok(());
+    }
+
+    if options.feature_collection {
+        // Write opening of FeatureCollection
+        if options.pretty_print {
             writer
-                .write_all(b"\n")
+                .write_all(b"{\n  \"type\": \"FeatureCollection\",\n  \"features\": [\n")
                 .map_err(|e| DataFusionError::External(Box::new(e)))?;
+        } else {
+            writer
+                .write_all(b"{\"type\":\"FeatureCollection\",\"features\":[")
+                .map_err(|e| DataFusionError::External(Box::new(e)))?;
+        }
+
+        let mut first_feature = true;
+
+        // Stream features from each batch
+        for batch in batches {
+            let features = batch_to_features(batch, options)?;
+
+            for feature in features {
+                // Write comma separator (except before first feature)
+                if !first_feature {
+                    writer
+                        .write_all(b",")
+                        .map_err(|e| DataFusionError::External(Box::new(e)))?;
+                    if options.pretty_print {
+                        writer
+                            .write_all(b"\n")
+                            .map_err(|e| DataFusionError::External(Box::new(e)))?;
+                    }
+                }
+                first_feature = false;
+
+                // Write feature
+                let json_str = if options.pretty_print {
+                    let feature_json = serde_json::to_string_pretty(&feature)
+                        .map_err(|e| DataFusionError::External(Box::new(e)))?;
+                    // Indent the feature JSON
+                    feature_json
+                        .lines()
+                        .map(|line| format!("    {line}"))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                } else {
+                    serde_json::to_string(&feature)
+                        .map_err(|e| DataFusionError::External(Box::new(e)))?
+                };
+
+                writer
+                    .write_all(json_str.as_bytes())
+                    .map_err(|e| DataFusionError::External(Box::new(e)))?;
+            }
+        }
+
+        // Write closing of FeatureCollection
+        if options.pretty_print {
+            writer
+                .write_all(b"\n  ]\n}")
+                .map_err(|e| DataFusionError::External(Box::new(e)))?;
+        } else {
+            writer
+                .write_all(b"]}")
+                .map_err(|e| DataFusionError::External(Box::new(e)))?;
+        }
+    } else {
+        // Newline-delimited GeoJSON (streaming friendly)
+        for batch in batches {
+            let features = batch_to_features(batch, options)?;
+
+            for feature in features {
+                let geojson = GeoJson::Feature(feature);
+                let json_str = serde_json::to_string(&geojson)
+                    .map_err(|e| DataFusionError::External(Box::new(e)))?;
+
+                writer
+                    .write_all(json_str.as_bytes())
+                    .map_err(|e| DataFusionError::External(Box::new(e)))?;
+                writer
+                    .write_all(b"\n")
+                    .map_err(|e| DataFusionError::External(Box::new(e)))?;
+            }
         }
     }
 
     Ok(())
+}
+
+/// Write record batches to `GeoJSON` format
+///
+/// # Errors
+///
+/// Returns an error if writing to the output fails or if `GeoJSON` serialization fails
+///
+/// # Deprecated
+///
+/// This function collects all features in memory. Use `write_geojson_streaming` instead.
+pub fn write_geojson<W: IoWrite>(
+    writer: &mut W,
+    batches: &[RecordBatch],
+    options: &GeoJsonWriterOptions,
+) -> Result<()> {
+    // Delegate to streaming version
+    write_geojson_streaming(writer, batches, options)
 }
 
 /// Write record batches to `GeoJSON` bytes
@@ -367,6 +440,9 @@ mod tests {
         let options = GeoJsonWriterOptions::default();
 
         let result = write_geojson_to_bytes(&batches, &options).unwrap();
-        assert!(result.is_empty());
+        // Empty batches should produce an empty FeatureCollection
+        let json_str = String::from_utf8(result).unwrap();
+        assert!(json_str.contains("\"type\":\"FeatureCollection\""));
+        assert!(json_str.contains("\"features\":[]"));
     }
 }

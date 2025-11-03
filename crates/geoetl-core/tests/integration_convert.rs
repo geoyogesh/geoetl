@@ -100,6 +100,9 @@ async fn test_e2e_csv_to_csv_conversion() {
         &csv_driver,
         "wkt",
         None,
+        None, // batch_size
+        None, // read_partitions
+        None, // write_partitions
     )
     .await;
 
@@ -142,6 +145,9 @@ async fn test_e2e_geojson_to_geojson_conversion() {
         &geojson_driver,
         "geometry",
         None,
+        None, // batch_size
+        None, // read_partitions
+        None, // write_partitions
     )
     .await;
 
@@ -188,6 +194,9 @@ async fn test_e2e_large_csv_conversion() {
         &csv_driver,
         "wkt",
         None,
+        None, // batch_size
+        None, // read_partitions
+        None, // write_partitions
     )
     .await;
 
@@ -240,6 +249,9 @@ async fn test_e2e_driver_validation() {
         &output_driver,
         "wkt",
         None,
+        None, // batch_size
+        None, // read_partitions
+        None, // write_partitions
     )
     .await;
 
@@ -278,6 +290,9 @@ async fn test_e2e_csv_with_special_characters() {
         &csv_driver,
         "wkt",
         None,
+        None, // batch_size
+        None, // read_partitions
+        None, // write_partitions
     )
     .await;
 
@@ -318,6 +333,9 @@ async fn test_e2e_multiple_conversions_same_session() {
         &csv_driver,
         "wkt",
         None,
+        None, // batch_size
+        None, // read_partitions
+        None, // write_partitions
     )
     .await;
 
@@ -329,6 +347,9 @@ async fn test_e2e_multiple_conversions_same_session() {
         &geojson_driver,
         "geometry",
         None,
+        None, // batch_size
+        None, // read_partitions
+        None, // write_partitions
     )
     .await;
 

@@ -40,6 +40,103 @@ pub fn parse_geojson_bytes(
     }
 }
 
+/// Attempt to fix truncated `GeoJSON` by finding the last complete feature
+/// and closing the JSON structure properly.
+fn fix_truncated_geojson(text: &str) -> String {
+    // Find the last complete feature by looking for the last "} }," pattern
+    // which indicates the end of a feature object followed by comma
+    if let Some(last_feature_end) = text.rfind("} },") {
+        // Cut off everything after the last complete feature
+        // Include the "} }" but remove the trailing comma
+        let truncated = &text[..last_feature_end + 3]; // +3 to include "} }"
+        // Close the features array and the FeatureCollection object
+        format!("{truncated} ] }}")
+    } else {
+        // If we can't find a complete feature, return empty FeatureCollection
+        r#"{"type":"FeatureCollection","features":[]}"#.to_string()
+    }
+}
+
+/// Parse raw bytes that may contain incomplete/truncated `GeoJSON` for schema inference.
+/// This is more lenient than `parse_geojson_bytes` and will extract features even from
+/// truncated `FeatureCollections`.
+pub fn parse_geojson_bytes_partial(
+    bytes: &[u8],
+    limit: Option<usize>,
+    context: impl Into<String>,
+) -> SpatialFormatResult<Vec<FeatureRecord>> {
+    let context = context.into();
+
+    // First try the standard parser - if it works, great!
+    if let Ok(records) = parse_geojson_bytes(bytes, limit, &context) {
+        return Ok(records);
+    }
+
+    // If standard parsing fails, try to manually extract features from truncated JSON
+    // Parse as raw JSON value
+    let text = std::str::from_utf8(bytes).map_err(|err| SpatialFormatReadError::Parse {
+        message: format!("Invalid UTF-8: {err}"),
+        position: None,
+        context: Some(context.clone()),
+    })?;
+
+    // Try to fix truncated JSON by closing any open structures
+    let fixed_text = fix_truncated_geojson(text);
+
+    let value: JsonValue =
+        serde_json::from_str(&fixed_text).map_err(|err| SpatialFormatReadError::Parse {
+            message: format!("Failed to parse JSON: {err}"),
+            position: None,
+            context: Some(context.clone()),
+        })?;
+
+    // Extract features array from FeatureCollection
+    let features_array = if let JsonValue::Object(mut obj) = value {
+        if let Some(JsonValue::Array(features)) = obj.remove("features") {
+            features
+        } else {
+            return Err(SpatialFormatReadError::Parse {
+                message: "No 'features' array found in object".to_string(),
+                position: None,
+                context: Some(context),
+            });
+        }
+    } else {
+        return Err(SpatialFormatReadError::Parse {
+            message: "Expected object with 'features' array".to_string(),
+            position: None,
+            context: Some(context),
+        });
+    };
+
+    // Parse each feature
+    let mut records = Vec::new();
+    for feature_value in features_array {
+        if let Ok(feature) = serde_json::from_value::<Feature>(feature_value)
+            && let Ok(record) = feature_to_record(feature)
+        {
+            records.push(record);
+
+            if let Some(max) = limit
+                && records.len() >= max
+            {
+                break;
+            }
+        }
+        // Skip features that fail to parse - we're being lenient
+    }
+
+    if records.is_empty() {
+        Err(SpatialFormatReadError::Parse {
+            message: "No valid features found in partial GeoJSON".to_string(),
+            position: None,
+            context: Some(context),
+        })
+    } else {
+        Ok(records)
+    }
+}
+
 fn geojson_to_records(
     geojson: GeoJson,
     limit: Option<usize>,
@@ -75,7 +172,7 @@ fn feature_collection_to_records(
         .collect()
 }
 
-fn feature_to_record(feature: Feature) -> SpatialFormatResult<FeatureRecord> {
+pub(crate) fn feature_to_record(feature: Feature) -> SpatialFormatResult<FeatureRecord> {
     let geometry = match feature.geometry {
         Some(geometry) => Some(convert_geometry(geometry, "feature")?),
         None => None,
