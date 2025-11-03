@@ -1,5 +1,6 @@
 //! `GeoJSON` Data Sink implementation for writing data to `GeoJSON` files
 
+use std::io::Write;
 use std::sync::Arc;
 
 use arrow_schema::SchemaRef;
@@ -13,7 +14,7 @@ use datafusion_execution::{SendableRecordBatchStream, TaskContext};
 use datafusion_physical_expr::LexRequirement;
 use futures::StreamExt;
 
-use crate::writer::{GeoJsonWriterOptions, write_geojson};
+use crate::writer::GeoJsonWriterOptions;
 
 /// `GeoJSON` data sink that implements the `DataSink` trait
 #[derive(Debug)]
@@ -64,33 +65,91 @@ impl DataSink for GeoJsonSink {
         mut data: SendableRecordBatchStream,
         _context: &Arc<TaskContext>,
     ) -> Result<u64> {
-        let mut batches = Vec::new();
+        // Get output path from original URL (the file path user specified)
+        let file_path = &self.config.original_url;
+
+        // Create output file
+        let mut file =
+            std::fs::File::create(file_path).map_err(|e| DataFusionError::External(Box::new(e)))?;
+
         let mut row_count = 0u64;
 
-        // Collect all batches from the stream
+        // Write opening of FeatureCollection
+        if self.writer_options.feature_collection {
+            if self.writer_options.pretty_print {
+                file.write_all(b"{\n  \"type\": \"FeatureCollection\",\n  \"features\": [\n")
+                    .map_err(|e| DataFusionError::External(Box::new(e)))?;
+            } else {
+                file.write_all(b"{\"type\":\"FeatureCollection\",\"features\":[")
+                    .map_err(|e| DataFusionError::External(Box::new(e)))?;
+            }
+        }
+
+        let mut first_feature = true;
+
+        // Stream batches and write features incrementally
         while let Some(batch_result) = data.next().await {
             let batch = batch_result?;
             row_count += batch.num_rows() as u64;
-            batches.push(batch);
+
+            // Convert batch to features
+            let features = crate::writer::batch_to_features(&batch, &self.writer_options)?;
+
+            // Write each feature
+            for feature in features {
+                if self.writer_options.feature_collection {
+                    // Write comma separator (except before first feature)
+                    if !first_feature {
+                        file.write_all(b",")
+                            .map_err(|e| DataFusionError::External(Box::new(e)))?;
+                        if self.writer_options.pretty_print {
+                            file.write_all(b"\n")
+                                .map_err(|e| DataFusionError::External(Box::new(e)))?;
+                        }
+                    }
+                    first_feature = false;
+
+                    // Write feature
+                    let json_str = if self.writer_options.pretty_print {
+                        let feature_json = serde_json::to_string_pretty(&feature)
+                            .map_err(|e| DataFusionError::External(Box::new(e)))?;
+                        // Indent the feature JSON
+                        feature_json
+                            .lines()
+                            .map(|line| format!("    {line}"))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    } else {
+                        serde_json::to_string(&feature)
+                            .map_err(|e| DataFusionError::External(Box::new(e)))?
+                    };
+
+                    file.write_all(json_str.as_bytes())
+                        .map_err(|e| DataFusionError::External(Box::new(e)))?;
+                } else {
+                    // Newline-delimited GeoJSON
+                    let geojson = geojson::GeoJson::Feature(feature);
+                    let json_str = serde_json::to_string(&geojson)
+                        .map_err(|e| DataFusionError::External(Box::new(e)))?;
+
+                    file.write_all(json_str.as_bytes())
+                        .map_err(|e| DataFusionError::External(Box::new(e)))?;
+                    file.write_all(b"\n")
+                        .map_err(|e| DataFusionError::External(Box::new(e)))?;
+                }
+            }
         }
 
-        // Write to output - for now write to a single file
-        let output_path = self
-            .config
-            .table_paths
-            .first()
-            .ok_or_else(|| DataFusionError::Internal("No output path specified".to_string()))?;
-
-        let file_path = format!(
-            "{}/data.geojson",
-            <datafusion::datasource::listing::ListingTableUrl as AsRef<str>>::as_ref(output_path)
-        );
-
-        // For now, write to local filesystem
-        let mut file = std::fs::File::create(&file_path)
-            .map_err(|e| DataFusionError::External(Box::new(e)))?;
-
-        write_geojson(&mut file, &batches, &self.writer_options)?;
+        // Write closing of FeatureCollection
+        if self.writer_options.feature_collection {
+            if self.writer_options.pretty_print {
+                file.write_all(b"\n  ]\n}")
+                    .map_err(|e| DataFusionError::External(Box::new(e)))?;
+            } else {
+                file.write_all(b"]}")
+                    .map_err(|e| DataFusionError::External(Box::new(e)))?;
+            }
+        }
 
         Ok(row_count)
     }

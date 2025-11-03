@@ -12,13 +12,14 @@ use datafusion::datasource::listing::PartitionedFile;
 use datafusion::datasource::physical_plan::{FileMeta, FileOpenFuture, FileOpener};
 use datafusion::error::{DataFusionError, Result};
 use datafusion_shared::SpatialFormatReadError;
-use futures::TryStreamExt;
+use futures::{StreamExt, TryStreamExt};
 use geoarrow_array::GeoArrowArray;
 use geoarrow_array::builder::GeometryBuilder;
 use object_store::ObjectStore;
 
+use crate::decoder::GeoJsonDecoder;
 use crate::file_format::GeoJsonFormatOptions;
-use crate::parser::{FeatureRecord, describe_value, parse_geojson_bytes};
+use crate::parser::{FeatureRecord, describe_value};
 
 /// `GeoJSON` file opener that produces record batches using `GeoArrow` arrays.
 #[derive(Clone)]
@@ -37,11 +38,12 @@ impl GeoJsonOpener {
         projection: Option<Vec<usize>>,
         object_store: Arc<dyn ObjectStore>,
     ) -> Self {
+        let batch_size = options.batch_size;
         Self {
             options,
             schema,
             projection,
-            batch_size: 8192,
+            batch_size,
             object_store,
         }
     }
@@ -61,6 +63,7 @@ impl FileOpener for GeoJsonOpener {
             let location = file_meta.location();
             let source_path: Arc<str> = Arc::from(location.to_string());
 
+            // Get byte stream instead of loading entire file
             let get_result = object_store.get(location).await.map_err(|err| {
                 DataFusionError::from(SpatialFormatReadError::Io {
                     source: std::io::Error::other(err),
@@ -68,15 +71,11 @@ impl FileOpener for GeoJsonOpener {
                 })
             })?;
 
-            let bytes = get_result.bytes().await.map_err(|err| {
-                DataFusionError::from(SpatialFormatReadError::Io {
-                    source: std::io::Error::other(err),
-                    context: Some(source_path.to_string()),
-                })
-            })?;
+            // Create streaming decoder
+            let decoder = GeoJsonDecoder::new(source_path.to_string());
 
-            let records = parse_geojson_bytes(&bytes, None, source_path.to_string())
-                .map_err(DataFusionError::from)?;
+            // Get byte stream (NOT .bytes() which loads everything!)
+            let byte_stream = get_result.into_stream();
 
             let output_schema = if let Some(ref proj) = opener.projection {
                 let fields: Vec<Field> = proj
@@ -88,25 +87,73 @@ impl FileOpener for GeoJsonOpener {
                 opener.schema.clone()
             };
 
-            let state = GeoJsonReadState {
+            let state = StreamingGeoJsonReadState {
                 schema: output_schema,
                 options: opener.options.clone(),
-                features: Arc::new(records),
                 batch_size: opener.batch_size,
-                offset: 0,
                 source: Arc::clone(&source_path),
+                decoder,
+                byte_stream: Box::pin(byte_stream),
+                feature_buffer: Vec::new(),
+                stream_finished: false,
             };
 
             let stream = futures::stream::try_unfold(state, |mut state| async move {
-                if state.offset >= state.features.len() {
-                    return Ok(None);
-                }
+                loop {
+                    // If we have enough features buffered, yield a batch
+                    if state.feature_buffer.len() >= state.batch_size {
+                        let features_for_batch: Vec<_> =
+                            state.feature_buffer.drain(..state.batch_size).collect();
 
-                let end = (state.offset + state.batch_size).min(state.features.len());
-                let slice = &state.features[state.offset..end];
-                let batch = records_to_batch(&state.schema, &state.options, &state.source, slice)?;
-                state.offset = end;
-                Ok(Some((batch, state)))
+                        let batch = records_to_batch(
+                            &state.schema,
+                            &state.options,
+                            &state.source,
+                            &features_for_batch,
+                        )?;
+
+                        return Ok(Some((batch, state)));
+                    }
+
+                    // If stream is finished and buffer is empty, we're done
+                    if state.stream_finished {
+                        if state.feature_buffer.is_empty() {
+                            return Ok(None);
+                        }
+                        // Yield remaining features as final batch
+                        let features_for_batch: Vec<_> = state.feature_buffer.drain(..).collect();
+
+                        let batch = records_to_batch(
+                            &state.schema,
+                            &state.options,
+                            &state.source,
+                            &features_for_batch,
+                        )?;
+
+                        return Ok(Some((batch, state)));
+                    }
+
+                    // Fetch more bytes from stream
+                    match state.byte_stream.next().await {
+                        Some(Ok(bytes)) => {
+                            // Decode bytes into features
+                            let features = state.decoder.decode(&bytes)?;
+                            state.feature_buffer.extend(features);
+                        },
+                        Some(Err(err)) => {
+                            return Err(DataFusionError::from(SpatialFormatReadError::Io {
+                                source: std::io::Error::other(err),
+                                context: Some(state.source.to_string()),
+                            }));
+                        },
+                        None => {
+                            // Stream finished, get any remaining features
+                            let remaining = state.decoder.finish()?;
+                            state.feature_buffer.extend(remaining);
+                            state.stream_finished = true;
+                        },
+                    }
+                }
             })
             .into_stream();
 
@@ -115,13 +162,16 @@ impl FileOpener for GeoJsonOpener {
     }
 }
 
-struct GeoJsonReadState {
+struct StreamingGeoJsonReadState {
     schema: SchemaRef,
     options: GeoJsonFormatOptions,
-    features: Arc<Vec<FeatureRecord>>,
     batch_size: usize,
-    offset: usize,
     source: Arc<str>,
+    decoder: GeoJsonDecoder,
+    byte_stream:
+        std::pin::Pin<Box<dyn futures::Stream<Item = object_store::Result<bytes::Bytes>> + Send>>,
+    feature_buffer: Vec<FeatureRecord>,
+    stream_finished: bool,
 }
 
 fn records_to_batch(

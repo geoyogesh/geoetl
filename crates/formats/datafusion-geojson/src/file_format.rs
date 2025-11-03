@@ -18,7 +18,7 @@ use geoarrow_schema::{CoordType, GeometryType};
 use object_store::{ObjectMeta, ObjectStore};
 
 use crate::file_source::{GeoJsonExec, GeoJsonFileSource};
-use crate::parser::{FeatureRecord, parse_geojson_bytes};
+use crate::parser::FeatureRecord;
 
 /// Options controlling `GeoJSON` reading behaviour.
 #[derive(Debug, Clone)]
@@ -135,6 +135,10 @@ impl FileFormat for GeoJsonFormat {
         store: &Arc<dyn ObjectStore>,
         objects: &[ObjectMeta],
     ) -> Result<SchemaRef> {
+        // For schema inference, only read a limited portion of the file
+        // to avoid loading large files entirely into memory
+        const MAX_BYTES_FOR_SCHEMA_INFERENCE: usize = 10 * 1024 * 1024; // 10 MB
+
         if objects.is_empty() {
             return Ok(Arc::new(Schema::empty()));
         }
@@ -142,16 +146,14 @@ impl FileFormat for GeoJsonFormat {
         let object = &objects[0];
         let location = object.location.clone();
 
+        let file_size = object.size;
+        #[allow(clippy::cast_possible_truncation)]
+        let bytes_to_read = std::cmp::min(file_size as usize, MAX_BYTES_FOR_SCHEMA_INFERENCE);
+
+        // Use get_range to read only the first N bytes
+        let range = 0..bytes_to_read as u64;
         let bytes = store
-            .get(&object.location)
-            .await
-            .map_err(|err| {
-                datafusion::error::DataFusionError::from(SpatialFormatReadError::Io {
-                    source: std::io::Error::other(err),
-                    context: Some(location.to_string()),
-                })
-            })?
-            .bytes()
+            .get_range(&object.location, range)
             .await
             .map_err(|err| {
                 datafusion::error::DataFusionError::from(SpatialFormatReadError::Io {
@@ -160,7 +162,7 @@ impl FileFormat for GeoJsonFormat {
                 })
             })?;
 
-        let records = parse_geojson_bytes(
+        let records = crate::parser::parse_geojson_bytes_partial(
             &bytes,
             self.options.schema_infer_max_features,
             location.to_string(),
@@ -203,6 +205,7 @@ impl FileFormat for GeoJsonFormat {
         order_requirements: Option<datafusion_physical_expr::LexRequirement>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
         use datafusion::logical_expr::dml::InsertOp;
+        use datafusion_datasource::sink::DataSinkExec;
 
         if conf.insert_op != InsertOp::Append {
             return Err(datafusion::error::DataFusionError::NotImplemented(
@@ -218,12 +221,7 @@ impl FileFormat for GeoJsonFormat {
         // Create the sink
         let sink = Arc::new(crate::sink::GeoJsonSink::new(conf, writer_options));
 
-        // Create the writer execution plan
-        Ok(Arc::new(crate::sink::GeoJsonWriterExec::new(
-            input,
-            sink,
-            order_requirements,
-        )))
+        Ok(Arc::new(DataSinkExec::new(input, sink, order_requirements)))
     }
 }
 

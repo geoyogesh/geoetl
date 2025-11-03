@@ -12,18 +12,23 @@ repository.workspace = true
 arrow-array = { workspace = true }
 arrow-schema = { workspace = true }
 async-trait = { workspace = true }
+bytes = { workspace = true }
 datafusion = { workspace = true }
 datafusion-common = { workspace = true }
+datafusion-datasource = { workspace = true }
 datafusion-execution = { workspace = true }
 datafusion-physical-expr = { workspace = true }
 datafusion-session = { workspace = true }
 datafusion-shared = { path = "../datafusion-shared" }
 futures = { workspace = true }
-geoarrow-array = { workspace = true }
+geoarrow-array = { workspace = true, features = ["geozero"] }
 geoarrow-schema = { workspace = true }
 geojson = "0.24.2"
 geo-types = "0.7"
+geo-traits = { workspace = true }
+geo = "0.29"
 geozero = { workspace = true }
+wkt = "0.14"
 object_store = { workspace = true, features = ["aws", "azure", "gcp", "http"] }
 serde_json = "1.0"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

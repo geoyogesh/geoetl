@@ -113,6 +113,17 @@ impl FormatFactory for GeoJsonFormatFactory {
     fn create_writer(&self) -> Option<Arc<dyn DataWriter>> {
         Some(Arc::new(GeoJsonWriter))
     }
+
+    fn create_file_format(
+        &self,
+        geometry_column: &str,
+    ) -> Option<Arc<dyn datafusion::datasource::file_format::FileFormat>> {
+        // Create GeoJSON file format for streaming execution
+        let options = crate::file_format::GeoJsonFormatOptions::default()
+            .with_geometry_column_name(geometry_column);
+        let format = crate::file_format::GeoJsonFormat::new(options);
+        Some(Arc::new(format))
+    }
 }
 
 /// Registers the `GeoJSON` format with the global driver registry.

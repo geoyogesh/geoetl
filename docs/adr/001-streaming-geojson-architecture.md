@@ -2,7 +2,8 @@
 
 ## Status
 
-**Draft** - Implemented in v0.1.2
+**Accepted** - Implemented and Benchmarked in v0.1.2
+**Last Updated**: 2025-01-03 - Added production benchmark results and performance analysis
 
 ## Context
 
@@ -135,23 +136,51 @@ Determined through systematic testing with 15 GB file (129.7M features):
    - Type conflicts possible if early features unrepresentative
    - *Mitigation*: Configurable schema_infer_max_features (default: 1,024)
 
-3. **Performance bottleneck**: CPU-bound on JSON parsing (~85% of time)
+3. **Performance bottleneck**: CPU-bound on JSON parsing - **CRITICAL ISSUE** ⚠️
+   - Current throughput: 297 MB/min (12.0 MB/s) - too slow for production
+   - CPU fully saturated (99.5%) but still slow
    - Single-threaded parsing limits throughput
-   - Diminishing returns beyond 262K batch size
-   - *Mitigation*: Documented as known limitation; future: parallel parsing, SIMD
+   - JSON parsing/serialization is the primary bottleneck
+   - **Impact**: 14.5 GB file takes 50 minutes (should be 7-15 minutes)
+   - *Required Actions*:
+     - Profile JSON parsing with flamegraph to identify hotspots
+     - Consider faster JSON libraries (simd-json, sonic-rs)
+     - Explore parallel parsing of independent features
+     - Benchmark SIMD optimizations
+   - *Target*: 1-2 GB/min (3-7x improvement needed)
 
 4. **Buffer management overhead**: Rolling buffer requires memory copying
    - *Mitigation*: Acceptable tradeoff for large file support
 
+### Learnings from Production Benchmarking
+
+**What Worked:**
+- ✅ Streaming architecture: Memory stays constant regardless of file size
+- ✅ Configurable batch_size: Users can tune for their needs
+- ✅ DataFusion integration: Seamless streaming execution
+- ✅ Schema inference: Accurately detects types from samples
+
+**What Needs Improvement:**
+- ⚠️ JSON parsing performance: Primary bottleneck limiting production readiness
+- ⚠️ Write throughput: 12.0 MB/s is slow compared to CSV (88.2 MB/s)
+- ⚠️ No parallelization: Single-threaded processing leaves performance on the table
+
+**Decision for Next Phase:**
+- **Immediate**: Document performance limitations honestly
+- **Short-term**: Profile and optimize JSON parsing path
+- **Medium-term**: Evaluate faster JSON libraries (simd-json)
+- **Long-term**: Design parallel parsing architecture if needed
+
 ### Trade-offs Summary
 
-| Aspect | In-Memory | Streaming (CHOSEN) |
-|--------|-----------|-------------------|
-| Memory | O(n) - 15+ GB | O(1) - 77 MB ✅ |
-| Max File Size | ~RAM size | Unlimited ✅ |
-| Throughput | Very fast | Fast (330 MB/min) ✅ |
-| Complexity | Simple | Complex ⚠️ |
-| Schema Accuracy | 100% | 95-99% ⚠️ |
+| Aspect | In-Memory | Streaming (CHOSEN) | Result |
+|--------|-----------|-------------------|--------|
+| Memory | O(n) - 15+ GB | O(1) - 84 MB | ✅ Validated |
+| Max File Size | ~RAM size | Unlimited | ✅ Validated |
+| Throughput | Very fast (~2GB/min) | Slow (297 MB/min) | ⚠️ Needs 3-7x improvement |
+| Complexity | Simple | Complex | ⚠️ Acceptable tradeoff |
+| Schema Accuracy | 100% | 95-99% | ✅ Sufficient |
+| Production Ready | Yes | No (perf) | ⚠️ Memory: Yes, Speed: No |
 
 ### Alternative Considered
 
@@ -163,20 +192,44 @@ Determined through systematic testing with 15 GB file (129.7M features):
 
 ## Implementation Evidence
 
-Tested with 15 GB GeoJSON (microsoft-buildings_point.geojson, 129.7M features):
+### Production Benchmark Results
 
-| Configuration | Batch Size | Memory | Time | Throughput |
-|---------------|-----------|--------|------|-----------|
-| Default | 8,192 | 34 MB | 65 min | 230 MB/min |
-| **Optimal** | **262,144** | **77 MB** | **45 min** | **330 MB/min** ✅ |
-| Ultra | 524,288 | 80 MB | 50 min | 300 MB/min |
-| Maximum | 2,097,152 | 75 MB | 66 min | 227 MB/min |
+Comprehensive testing with Microsoft Buildings dataset (129M features, 14.5 GB GeoJSON):
 
-**Key findings**:
-- Memory constant (34-80 MB) across all batch sizes
-- Optimal performance at 262K batch size
-- Diminishing returns beyond 262K (larger batches actually slower)
-- CPU-bound workload: JSON parsing consumes ~85% of processing time
+**Dataset Sizes Tested:**
+
+| Dataset | Features | Input Size | Duration | Peak Memory | Throughput | CPU |
+|---------|----------|------------|----------|-------------|------------|-----|
+| 10k | 10,000 | 1.14 MB | <1s | Minimal | Instant | N/A |
+| 100k | 100,000 | 11.40 MB | 2s | Minimal | 380 MB/min | N/A |
+| 1M | 1,000,000 | 114.13 MB | 23s | 67.5 MB | 300 MB/min | 99.7% |
+| **Full** | **129M** | **14.5 GB** | **49.95 min** | **83.7 MB** | **297 MB/min** | **99.5%** |
+
+**Key Findings:**
+
+1. **Memory Efficiency Validated** ✅
+   - Peak memory: 83.7 MB for 14.5 GB input (0.0056x ratio)
+   - Memory usage constant across all dataset sizes (67-84 MB)
+   - True O(1) space complexity confirmed
+
+2. **Performance Analysis** ⚠️
+   - Throughput: 297 MB/min (12.0 MB/s write)
+   - CPU utilization: 99.5% (fully saturated)
+   - **Critical Issue**: Performance too slow for production use
+   - **Target**: Need 1-2 GB/min (3-7x improvement)
+
+3. **Scalability Confirmed** ✅
+   - Linear scaling: 10k → 129M features (performance characteristics remain consistent)
+   - No memory growth during 50-minute processing
+   - Streaming architecture works as designed
+
+**Batch Size Configuration Testing:**
+
+| Batch Size | Memory | Time | Throughput | Notes |
+|------------|--------|------|------------|-------|
+| 8,192 (default) | 67.5 MB | ~50 min | ~290 MB/min | Conservative memory usage |
+| 262,144 (optimal) | 83.7 MB | 49.95 min | 297 MB/min | Best throughput tested |
+| 524,288 | Not tested | Not tested | Est. ~300 MB/min | Diminishing returns expected |
 
 **Configuration Files Modified:**
 - `crates/formats/datafusion-geojson/src/physical_exec.rs:45` - Set batch_size to 262,144

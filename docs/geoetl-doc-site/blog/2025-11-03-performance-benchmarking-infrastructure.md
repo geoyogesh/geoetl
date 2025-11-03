@@ -8,7 +8,7 @@ date: 2025-11-03
 
 # Building GeoETL's Benchmarking Infrastructure: From Guesswork to Data
 
-**TL;DR**: We built systematic benchmarking for GeoETL and achieved **1.43x faster performance** (45 min vs 65 min) while processing 15 GB files in just **77 MB of RAM**. Here's how benchmarking shaped our architecture, identified bottlenecks, and guides future improvements.
+**TL;DR**: We built systematic benchmarking for GeoETL to understand performance across formats. Results: **CSV is production-ready** (2.3 GB/min, 50 MB RAM), while **GeoJSON needs optimization** (297 MB/min, 84 MB RAM). Benchmarking revealed a 7.6x performance gap and guides our optimization roadmap. Here's how we built the infrastructure and what we learned.
 
 <!--truncate-->
 
@@ -180,69 +180,142 @@ This structure enables:
 - Sharing reproducible results with the team
 - Building performance dashboards
 
-## How We Used It: The Optimization Story
+## What We Discovered: Benchmark Results
 
-### Phase 1: Baseline
+We tested GeoETL with the **Microsoft Buildings dataset** from [GeoArrow Data](https://github.com/geoarrow/geoarrow-data/):
+- **129.7 million features** (point geometries)
+- **CSV format**: 4.2 GB
+- **GeoJSON format**: 14.5 GB
+- Real-world production data
 
-Test dataset: **Microsoft Buildings** from [GeoArrow Data](https://github.com/geoarrow/geoarrow-data/)
-- 15 GB GeoJSON
-- 129.7 million points
-- Real production data
+### Executive Summary
 
-Baseline (8,192 batch size):
+| Format | Size | Duration | Memory | Throughput | Status |
+|--------|------|----------|--------|------------|--------|
+| **CSV** | 4.2 GB | **1.86 min** | 49.9 MB | **2,266 MB/min** | ✅ Production-ready |
+| **GeoJSON** | 14.5 GB | **49.95 min** | 83.7 MB | **297 MB/min** | ⚠️ Needs optimization |
+
+**Key finding**: CSV is 7.6x faster than GeoJSON. Both maintain O(1) memory (constant regardless of file size).
+
+### Production Benchmark Results
+
+#### CSV Performance: ✅ Production-Ready
+
+**Full dataset** (129M features, 4.2 GB):
+
+| Metric | Value |
+|--------|-------|
+| **Duration** | 1.86 minutes (112 seconds) |
+| **Peak Memory** | 49.9 MB |
+| **Throughput** | **2,266 MB/min** (38.2 MB/s) |
+| **CPU Usage** | 96.9% average |
+| **Disk I/O** | 8.8r / 88.2w MB/s |
+
+**Scaling test** (10k → 129M features):
+
+| Dataset | Rows | Size | Duration | Memory | Throughput |
+|---------|------|------|----------|--------|------------|
+| 10k | 10,000 | 0.31 MB | <1s | Minimal | Instant |
+| 100k | 100,000 | 3.20 MB | <1s | Minimal | Instant |
+| 1M | 1,000,000 | 32.11 MB | 1s | Minimal | 3,211 MB/min |
+| **Full** | **129M** | **4.2 GB** | **1.86 min** | **49.9 MB** | **2,266 MB/min** |
+
+**Key findings:**
+- ✅ **Excellent throughput**: 2.3 GB/min meets production requirements
+- ✅ **Constant memory**: 50 MB for multi-GB files (O(1) complexity validated)
+- ✅ **Linear scaling**: Performance consistent from 10k to 129M features
+- ✅ **High CPU efficiency**: 96.9% utilization without saturation
+- ✅ **Fast disk writes**: 88 MB/s write speed
+
+#### GeoJSON Performance: ⚠️ Needs Optimization
+
+**Full dataset** (129M features, 14.5 GB):
+
+| Metric | Value |
+|--------|-------|
+| **Duration** | 49.95 minutes (2,997 seconds) |
+| **Peak Memory** | 83.7 MB |
+| **Throughput** | **297 MB/min** (12.0 MB/s) |
+| **CPU Usage** | 99.5% average (fully saturated) |
+| **Disk I/O** | 1.2r / 12.0w MB/s |
+
+**Scaling test** (10k → 129M features):
+
+| Dataset | Features | Size | Duration | Memory | Throughput | CPU |
+|---------|----------|------|----------|--------|------------|-----|
+| 10k | 10,000 | 1.14 MB | <1s | Minimal | Instant | N/A |
+| 100k | 100,000 | 11.40 MB | 2s | Minimal | 380 MB/min | N/A |
+| 1M | 1,000,000 | 114.13 MB | 23s | 67.5 MB | 300 MB/min | 99.7% |
+| **Full** | **129M** | **14.5 GB** | **49.95 min** | **83.7 MB** | **297 MB/min** | **99.5%** |
+
+**Key findings:**
+- ✅ **Memory efficiency**: 84 MB constant for 14.5 GB file (O(1) complexity validated)
+- ✅ **Scalability**: Linear performance from 10k to 129M features
+- ⚠️ **Slow throughput**: 297 MB/min too slow for production use
+- ⚠️ **CPU bottleneck**: 99.5% saturation indicates parsing limitation
+- ⚠️ **Needs 3-7x improvement**: Target 1-2 GB/min for production readiness
+
+### Format Comparison: The 7.6x Performance Gap
+
+| Metric | CSV | GeoJSON | Difference |
+|--------|-----|---------|------------|
+| **Throughput** | 2,266 MB/min | 297 MB/min | **7.6x faster** |
+| **Duration** | 1.86 min | 49.95 min | **26.8x faster** |
+| **Peak Memory** | 49.9 MB | 83.7 MB | 1.7x lower |
+| **CPU Usage** | 96.9% | 99.5% | Similar efficiency |
+| **Write Speed** | 88.2 MB/s | 12.0 MB/s | 7.4x faster |
+| **Production Ready** | ✅ Yes | ⚠️ No | CSV ready now |
+
+**Why the gap?**
+
+1. **Format complexity**: CSV is simpler to parse than nested JSON
+2. **Parser maturity**: DataFusion's CSV reader is highly optimized
+3. **Data locality**: Columnar CSV structure vs nested GeoJSON objects
+4. **Text overhead**: GeoJSON has more structural characters (braces, quotes)
+
+**The bottleneck**: CPU-bound on JSON parsing/serialization. See [ADR 001](https://github.com/geoyogesh/geoetl/blob/main/docs/adr/001-streaming-geojson-architecture.md) and [ADR 003](https://github.com/geoyogesh/geoetl/blob/main/docs/adr/003-geojson-performance-optimization.md) for details.
+
+### What This Means for Users
+
+**For CSV users**: 🚀
+- Production-ready performance today
+- Process 4+ GB files in under 2 minutes
+- Constant 50 MB memory usage
+- Recommended for performance-critical workloads
+
+**For GeoJSON users**: ⚙️
+- Streaming architecture works (constant memory ✅)
+- Performance needs improvement (3-7x target)
+- Use CSV if throughput is critical
+- Optimization roadmap in [ADR 003](https://github.com/geoyogesh/geoetl/blob/main/docs/adr/003-geojson-performance-optimization.md)
+
+### How Benchmarking Shaped Our Architecture
+
+**Phase 1: Baseline Testing**
+- Established performance baselines for both formats
+- Validated streaming maintains O(1) memory
+- Identified CSV as already production-ready
+
+**Phase 2: Configuration Tuning**
+- Tested batch sizes from 2,048 to 2,097,152 features
+- Found optimal: 262,144 features (256K)
+- Applied settings across both formats
+
+**Phase 3: Bottleneck Analysis**
 ```
-Duration:    65 min
-Peak Memory: 34 MB
-Throughput:  230 MB/min
+CSV:     CPU 96.9%, Disk 88 MB/s write → Balanced, efficient
+GeoJSON: CPU 99.5%, Disk 12 MB/s write → CPU-bound, parsing limited
 ```
 
-### Phase 2: Finding Optimal Batch Size
+**Phase 4: Decision-Making**
+- CSV: No optimization needed, already exceeds requirements
+- GeoJSON: Created systematic optimization plan ([ADR 003](https://github.com/geoyogesh/geoetl/blob/main/docs/adr/003-geojson-performance-optimization.md))
+- Both: Applied optimal batch_size = 262,144 as default
 
-| Batch Size | Memory | Time | Throughput | vs Baseline |
-|-----------|--------|------|-----------|-------------|
-| 2,048 | 15 MB | 150 min | 100 MB/min | 0.43x |
-| **8,192 (default)** | **34 MB** | **65 min** | **230 MB/min** | **1.0x** |
-| 32,768 | 73 MB | 54 min | 278 MB/min | 1.2x |
-| 131,072 | 75 MB | 48 min | 312 MB/min | 1.35x |
-| **262,144 ✓** | **77 MB** | **45 min** | **330 MB/min** | **1.43x** |
-| 524,288 | 80 MB | 50 min | 300 MB/min | 1.3x |
-| 2,097,152 | 75 MB | 66 min | 227 MB/min | 0.99x |
-
-**Results:**
-- Memory stayed constant (15-80 MB) - streaming works
-- Optimal: 262K features
-- Beyond 256K: diminishing returns
-- **1.43x speedup with minimal memory increase**
-
-### Phase 3: Identifying the Bottleneck
-
-```
-CPU:     98-100% (maxed out)
-Disk:    1.4r/14.3w MB/s (well below capacity)
-Network: Negligible
-Threads: Single thread at 99%, others idle
-```
-
-**Diagnosis**: CPU-bound on JSON parsing, not I/O. See [ADR 001](https://github.com/geoyogesh/geoetl/blob/main/docs/adr/001-streaming-geojson-architecture.md).
-
-### Phase 4: Apply Optimal Settings
-
-Updated codebase with 262K batch size:
-
-`physical_exec.rs:45`:
-```rust
-batch_size: 262144,  // Optimal: 256K features
-```
-
-`decoder.rs:44`:
-```rust
-buffer: Vec::with_capacity(256 * 1024),
-```
-
-`operations.rs:47-50`:
+**Configuration applied** (`operations.rs:47-50`):
 ```rust
 let config = SessionConfig::new()
-    .with_batch_size(262144)
+    .with_batch_size(262144)  // Optimal for both formats
     .with_target_partitions(num_cpus::get());
 ```
 
@@ -304,22 +377,35 @@ The benchmark infrastructure is available in the [GeoETL repository](https://git
 ### Quick Start
 
 ```bash
-# 1. Download test data (15 GB)
+# 1. Download test data
 cd bench && ./data_download.sh
 
 # 2. Build optimized binary
 cargo build --release
 
-# 3. Run standard benchmark
-bench/run_benchmark.sh "./target/release/geoetl-cli convert --verbose \
-  --input bench/data/final/microsoft-buildings_point.geojson \
-  --output bench/output/test.geojson \
+# 3. Run CSV benchmark (fast: ~2 minutes)
+bench/run_benchmark.sh "./target/release/geoetl-cli convert \
+  --input bench/data/final/csv/buildings_point_full.csv \
+  --output bench/output/csv_test.csv \
+  --input-driver CSV \
+  --output-driver CSV \
+  --geometry-column WKT" \
+  "csv-test"
+
+# 4. Run GeoJSON benchmark (slower: ~50 minutes)
+bench/run_benchmark.sh "./target/release/geoetl-cli convert \
+  --input bench/data/final/geojson/buildings_point_full.geojson \
+  --output bench/output/geojson_test.geojson \
   --input-driver GeoJSON \
   --output-driver GeoJSON" \
-  "my-test"
+  "geojson-test"
 
-# 4. View results
-cat bench/results/my-test.json
+# 5. View and compare results
+cat bench/results/csv-test.json
+cat bench/results/geojson-test.json
+
+# 6. Compare throughput
+jq '.metrics.throughput_mb_per_min' bench/results/*.json
 ```
 
 ### Creating Your Own Benchmarks
@@ -347,48 +433,124 @@ See our [contributing guide](https://github.com/geoyogesh/geoetl/blob/main/CONTR
 
 ## The Results: Where We Are Today
 
-Our systematic benchmarking led to measurable improvements:
+Our systematic benchmarking revealed the reality of multi-format ETL performance:
 
-**Processing 15 GB GeoJSON (129.7M features):**
-- **Duration**: 45 minutes (down from 65 min)
-- **Memory**: 77 MB constant (regardless of file size)
-- **Throughput**: 330 MB/min (up from 230 MB/min)
-- **CPU**: 98-100% utilization
-- **Improvement**: **1.43x faster** with minimal memory increase
+### CSV: Production-Ready ✅
+**Processing 4.2 GB CSV (129M features):**
+- **Duration**: 1.86 minutes
+- **Memory**: 49.9 MB constant (O(1) complexity)
+- **Throughput**: 2,266 MB/min (38.2 MB/s)
+- **CPU**: 96.9% efficient utilization
+- **Status**: Exceeds production requirements
 
-**What this means in practice:**
-- Process files larger than your RAM
-- Predictable resource usage
-- Production-ready performance
-- No manual tuning required (optimal defaults)
+### GeoJSON: Needs Optimization ⚠️
+**Processing 14.5 GB GeoJSON (129M features):**
+- **Duration**: 49.95 minutes
+- **Memory**: 83.7 MB constant (O(1) complexity) ✅
+- **Throughput**: 297 MB/min (12.0 MB/s)
+- **CPU**: 99.5% saturated (parsing bottleneck)
+- **Status**: Memory-efficient but needs 3-7x speed improvement
+
+### What This Means in Practice
+
+**For both formats:**
+- ✅ Process files larger than your RAM (streaming validated)
+- ✅ Predictable resource usage (constant memory)
+- ✅ No manual tuning required (optimal defaults applied)
+
+**Format-specific:**
+- **CSV**: Production-ready today, recommended for performance-critical workloads
+- **GeoJSON**: Use for JSON ecosystem compatibility, optimization roadmap in progress ([ADR 003](https://github.com/geoyogesh/geoetl/blob/main/docs/adr/003-geojson-performance-optimization.md))
 
 ## Looking Forward
 
-This infrastructure is just the beginning. Future enhancements we're considering:
+Our benchmarking infrastructure guides GeoETL's roadmap:
+
+### Immediate Priority: GeoJSON Optimization
+
+Based on benchmark findings, we're pursuing a phased optimization strategy for GeoJSON ([ADR 003](https://github.com/geoyogesh/geoetl/blob/main/docs/adr/003-geojson-performance-optimization.md)):
+
+**Phase 1: Profiling** (Immediate)
+- Flamegraph analysis to identify JSON parsing hotspots
+- Measure baseline with detailed metrics
+
+**Phase 2: Quick Wins** (Weeks 2-3)
+- Evaluate faster JSON libraries (simd-json, sonic-rs)
+- Reduce string allocations
+- Target: 1.5-2x improvement (450-600 MB/min)
+
+**Phase 3: Structural Optimizations** (Months 2-3)
+- Parallel parsing of independent features
+- Write buffering optimizations
+- Target: 3-4x improvement (900-1200 MB/min)
+
+**Phase 4: Production-Ready** (Months 4-6)
+- Advanced optimizations based on Phase 3 results
+- Target: 1-2 GB/min (competitive with CSV)
+
+### Future Infrastructure Enhancements
 
 1. **CI/CD Integration**: Automated performance regression testing
 2. **Performance Dashboard**: Visualize trends over time
-3. **Multi-Format Benchmarks**: CSV, Parquet, GeoParquet comparisons
-4. **Cloud Benchmarks**: S3, GCS, Azure storage performance
-5. **Parallel Processing**: When we implement it, we'll measure the impact
+3. **Additional Format Benchmarks**: Parquet, GeoParquet, FlatGeobuf
+4. **Cloud Storage Benchmarks**: S3, GCS, Azure performance testing
+5. **Parallel Processing**: When implemented, measure multi-core scaling
 
 ## Conclusion
 
 Building GeoETL taught us that performance optimization doesn't have to be guesswork. With systematic benchmarking, it becomes a data-driven process.
 
-Our benchmark infrastructure gave us what we needed to make GeoETL production-ready:
-- **Visibility** into the real bottlenecks (JSON parsing, not I/O)
-- **Data** to find optimal configurations (262K batch size)
-- **Confidence** that streaming actually maintains O(1) memory
-- **Proof** of our performance claims (1.43x improvement, 77 MB for 15 GB files)
+### What Benchmarking Revealed
 
-The result? GeoETL can now process files larger than RAM with predictable, constant memory usage - **45 minutes for 15 GB instead of 65 minutes**, all while using just **77 MB of memory**.
+Our infrastructure gave us the visibility we needed to make informed decisions:
 
-This wasn't about building a universal benchmarking framework - it was about building the infrastructure we needed to make GeoETL fast, efficient, and reliable. The benchmarks shaped our architecture, validated our decisions, and proved that our streaming approach actually works at scale.
+**✅ What's Working:**
+- **CSV format**: Production-ready with 2.3 GB/min throughput
+- **Streaming architecture**: O(1) memory validated for both formats
+- **Optimal configuration**: 262K batch size applied as default
+- **Memory efficiency**: 50-84 MB for multi-GB files
 
-If you're working with legacy formats that weren't designed for modern performance requirements, systematic benchmarking isn't optional. It's how you turn assumptions into evidence and guesswork into science.
+**⚠️ What Needs Work:**
+- **GeoJSON performance**: 297 MB/min needs 3-7x improvement
+- **JSON parsing bottleneck**: CPU-bound at 99.5% saturation
+- **Optimization roadmap**: Clear path forward in ADR 003
 
-Ready to see it in action? Check out the [GeoETL repository](https://github.com/geoyogesh/geoetl) and try the benchmarks yourself. The infrastructure is there to help optimize GeoETL further - and we'd love to hear what you discover!
+### The Bigger Picture
+
+This wasn't about building a universal benchmarking framework - it was about building the infrastructure we needed to understand GeoETL's performance reality:
+
+**Before benchmarking**: Assumptions about "good enough" performance
+**After benchmarking**: Data-driven decisions with clear targets
+
+**Before benchmarking**: Guessing at optimal configurations
+**After benchmarking**: Evidence-based settings (262K batch size)
+
+**Before benchmarking**: Hoping streaming works at scale
+**After benchmarking**: Proof that O(1) memory holds for 15 GB files
+
+### Key Lessons
+
+1. **Be honest about performance**: CSV is production-ready, GeoJSON needs work
+2. **Measure everything**: CPU, memory, disk, network - bottlenecks hide in the data
+3. **Streaming validates**: Both formats maintain constant memory regardless of file size
+4. **Format matters**: 7.6x performance gap between CSV and GeoJSON reveals optimization priorities
+5. **Benchmarks drive architecture**: Real data shapes better decisions than intuition
+
+### The Results That Matter
+
+**For users today:**
+- CSV users get production-ready performance (2.3 GB/min)
+- GeoJSON users get memory efficiency (84 MB for 14.5 GB files)
+- Everyone gets predictable resource usage
+
+**For the project roadmap:**
+- Clear optimization path for GeoJSON
+- Evidence-based performance targets
+- Continuous measurement to track progress
+
+If you're building ETL tools for legacy formats (CSV, JSON, XML, shapefiles), systematic benchmarking isn't optional. It's how you turn assumptions into evidence, guesswork into science, and "it seems fast" into "it processes 4 GB in under 2 minutes with 50 MB of RAM."
+
+Ready to see it in action? Check out the [GeoETL repository](https://github.com/geoyogesh/geoetl) and run the benchmarks yourself. The infrastructure is there - and we'd love to hear what you discover!
 
 ---
 

@@ -177,6 +177,19 @@ impl FormatFactory for CsvFormatFactory {
     fn create_writer(&self) -> Option<Arc<dyn DataWriter>> {
         Some(Arc::new(CsvWriter))
     }
+
+    fn create_file_format(
+        &self,
+        _geometry_column: &str,
+    ) -> Option<Arc<dyn datafusion::datasource::file_format::FileFormat>> {
+        use crate::file_format::{CsvFormat, CsvFormatOptions};
+
+        // Create CSV format options
+        // Geometry conversion to WKT happens in the sink
+        let options = CsvFormatOptions::default();
+
+        Some(Arc::new(CsvFormat::new(options)))
+    }
 }
 
 /// Registers the CSV format with the global driver registry.

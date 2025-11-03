@@ -46,7 +46,7 @@ pub use factory::register_csv_format;
 pub use file_format::CsvFormatOptions;
 pub use file_source::CsvSourceBuilder;
 pub use object_store_reader::CsvFileMetadata;
-pub use sink::{CsvSink, CsvWriterExec};
+pub use sink::CsvSink;
 pub use writer::{CsvWriterOptions, write_csv, write_csv_to_bytes};
 
 use datafusion::prelude::*;
