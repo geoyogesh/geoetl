@@ -204,14 +204,7 @@ impl FileFormat for GeoJsonFormat {
         conf: datafusion::datasource::physical_plan::FileSinkConfig,
         order_requirements: Option<datafusion_physical_expr::LexRequirement>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        use datafusion::logical_expr::dml::InsertOp;
         use datafusion_datasource::sink::DataSinkExec;
-
-        if conf.insert_op != InsertOp::Append {
-            return Err(datafusion::error::DataFusionError::NotImplemented(
-                "Overwrites are not implemented yet for GeoJSON".to_string(),
-            ));
-        }
 
         // Create writer options from format options
         let writer_options = crate::writer::GeoJsonWriterOptions::default()

@@ -65,12 +65,40 @@ impl DataSink for GeoJsonSink {
         mut data: SendableRecordBatchStream,
         _context: &Arc<TaskContext>,
     ) -> Result<u64> {
-        // Get output path from original URL (the file path user specified)
-        let file_path = &self.config.original_url;
+        use datafusion::logical_expr::dml::InsertOp;
+        use std::fs::OpenOptions;
 
-        // Create output file
-        let mut file =
-            std::fs::File::create(file_path).map_err(|e| DataFusionError::External(Box::new(e)))?;
+        // Get output path from original URL (the file path user specified)
+        // Strip file:// prefix if present
+        let url_str = &self.config.original_url;
+        let file_path = if let Some(path) = url_str.strip_prefix("file://") {
+            path
+        } else {
+            url_str
+        };
+
+        // Open file based on insert operation mode
+        let mut file = match self.config.insert_op {
+            InsertOp::Overwrite => {
+                // Overwrite mode: create or truncate the file
+                std::fs::File::create(file_path)
+                    .map_err(|e| DataFusionError::External(Box::new(e)))?
+            },
+            InsertOp::Append => {
+                // Append mode: open for appending or create if doesn't exist
+                OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(file_path)
+                    .map_err(|e| DataFusionError::External(Box::new(e)))?
+            },
+            InsertOp::Replace => {
+                return Err(DataFusionError::NotImplemented(format!(
+                    "Insert operation {:?} is not supported for GeoJSON",
+                    self.config.insert_op
+                )));
+            },
+        };
 
         let mut row_count = 0u64;
 

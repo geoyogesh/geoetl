@@ -203,3 +203,197 @@ fn test_write_geojson_pretty_print() {
     assert!(json_str.contains('\n'));
     assert!(json_str.contains("  ")); // Indentation
 }
+
+#[tokio::test]
+async fn test_geojson_sink_overwrite_mode() {
+    let temp_dir = TempDir::new().unwrap();
+    let output_file = temp_dir.path().join("output.geojson");
+    let output_path = output_file.to_str().unwrap();
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int64, false),
+        Field::new("name", DataType::Utf8, true),
+        Field::new("geometry", DataType::Utf8, true),
+    ]));
+
+    // First write: create initial file with data
+    let id_array: ArrayRef = Arc::new(Int64Array::from(vec![1, 2]));
+    let name_array: ArrayRef = Arc::new(StringArray::from(vec![Some("first"), Some("second")]));
+    let geom_array: ArrayRef = Arc::new(StringArray::from(vec![
+        Some("POINT(0 0)"),
+        Some("POINT(1 1)"),
+    ]));
+    let batch1 =
+        RecordBatch::try_new(schema.clone(), vec![id_array, name_array, geom_array]).unwrap();
+
+    let config_overwrite = FileSinkConfig {
+        original_url: output_path.to_string(),
+        object_store_url: ObjectStoreUrl::local_filesystem(),
+        file_group: FileGroup::default(),
+        table_paths: vec![ListingTableUrl::parse(format!("file://{output_path}")).unwrap()],
+        output_schema: schema.clone(),
+        table_partition_cols: vec![],
+        insert_op: InsertOp::Overwrite,
+        keep_partition_by_columns: false,
+        file_extension: "geojson".to_string(),
+    };
+
+    let writer_options = GeoJsonWriterOptions::default().with_feature_collection(true);
+    let sink1 = GeoJsonSink::new(config_overwrite.clone(), writer_options.clone());
+    let stream1: SendableRecordBatchStream = Box::pin(RecordBatchStreamAdapter::new(
+        schema.clone(),
+        stream::iter(vec![Ok(batch1)]),
+    ));
+
+    let context = Arc::new(TaskContext::default());
+    let row_count1 = sink1.write_all(stream1, &context).await.unwrap();
+    assert_eq!(row_count1, 2);
+
+    // Verify initial content
+    let contents1 = fs::read_to_string(output_path).unwrap();
+    assert!(contents1.contains("\"type\":\"FeatureCollection\""));
+    assert!(contents1.contains("\"id\":1"));
+    assert!(contents1.contains("\"name\":\"first\""));
+    assert!(contents1.contains("\"id\":2"));
+    assert!(contents1.contains("\"name\":\"second\""));
+
+    // Second write: overwrite with different data
+    let id_array2: ArrayRef = Arc::new(Int64Array::from(vec![10, 20, 30]));
+    let name_array2: ArrayRef = Arc::new(StringArray::from(vec![
+        Some("new1"),
+        Some("new2"),
+        Some("new3"),
+    ]));
+    let geom_array2: ArrayRef = Arc::new(StringArray::from(vec![
+        Some("POINT(10 10)"),
+        Some("POINT(20 20)"),
+        Some("POINT(30 30)"),
+    ]));
+    let batch2 =
+        RecordBatch::try_new(schema.clone(), vec![id_array2, name_array2, geom_array2]).unwrap();
+
+    let sink2 = GeoJsonSink::new(config_overwrite, writer_options);
+    let stream2: SendableRecordBatchStream = Box::pin(RecordBatchStreamAdapter::new(
+        schema.clone(),
+        stream::iter(vec![Ok(batch2)]),
+    ));
+
+    let row_count2 = sink2.write_all(stream2, &context).await.unwrap();
+    assert_eq!(row_count2, 3);
+
+    // Verify file was overwritten (not appended)
+    let contents2 = fs::read_to_string(output_path).unwrap();
+    assert!(contents2.contains("\"type\":\"FeatureCollection\""));
+    assert!(contents2.contains("\"id\":10"));
+    assert!(contents2.contains("\"name\":\"new1\""));
+    assert!(contents2.contains("\"id\":20"));
+    assert!(contents2.contains("\"name\":\"new2\""));
+    assert!(contents2.contains("\"id\":30"));
+    assert!(contents2.contains("\"name\":\"new3\""));
+
+    // Old data should NOT be present (be specific to avoid substring matches)
+    assert!(
+        !contents2.contains("\"id\":1,"),
+        "Old data id:1 should not be present"
+    );
+    assert!(
+        !contents2.contains("\"id\":1}"),
+        "Old data id:1 should not be present"
+    );
+    assert!(
+        !contents2.contains("\"name\":\"first\""),
+        "Old data name:first should not be present"
+    );
+    assert!(
+        !contents2.contains("\"id\":2,"),
+        "Old data id:2 should not be present"
+    );
+    assert!(
+        !contents2.contains("\"id\":2}"),
+        "Old data id:2 should not be present"
+    );
+    assert!(
+        !contents2.contains("\"name\":\"second\""),
+        "Old data name:second should not be present"
+    );
+}
+
+#[tokio::test]
+async fn test_geojson_sink_append_mode() {
+    let temp_dir = TempDir::new().unwrap();
+    let output_file = temp_dir.path().join("output_append.geojson");
+    let output_path = output_file.to_str().unwrap();
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int64, false),
+        Field::new("name", DataType::Utf8, true),
+        Field::new("geometry", DataType::Utf8, true),
+    ]));
+
+    // First write: create initial file
+    let id_array: ArrayRef = Arc::new(Int64Array::from(vec![1, 2]));
+    let name_array: ArrayRef = Arc::new(StringArray::from(vec![Some("first"), Some("second")]));
+    let geom_array: ArrayRef = Arc::new(StringArray::from(vec![
+        Some("POINT(0 0)"),
+        Some("POINT(1 1)"),
+    ]));
+    let batch1 =
+        RecordBatch::try_new(schema.clone(), vec![id_array, name_array, geom_array]).unwrap();
+
+    let config_append = FileSinkConfig {
+        original_url: output_path.to_string(),
+        object_store_url: ObjectStoreUrl::local_filesystem(),
+        file_group: FileGroup::default(),
+        table_paths: vec![ListingTableUrl::parse(format!("file://{output_path}")).unwrap()],
+        output_schema: schema.clone(),
+        table_partition_cols: vec![],
+        insert_op: InsertOp::Append,
+        keep_partition_by_columns: false,
+        file_extension: "geojson".to_string(),
+    };
+
+    let writer_options = GeoJsonWriterOptions::default().with_feature_collection(false); // Use newline-delimited for append
+    let sink1 = GeoJsonSink::new(config_append.clone(), writer_options.clone());
+    let stream1: SendableRecordBatchStream = Box::pin(RecordBatchStreamAdapter::new(
+        schema.clone(),
+        stream::iter(vec![Ok(batch1)]),
+    ));
+
+    let context = Arc::new(TaskContext::default());
+    let row_count1 = sink1.write_all(stream1, &context).await.unwrap();
+    assert_eq!(row_count1, 2);
+
+    // Second write: append more data
+    let id_array2: ArrayRef = Arc::new(Int64Array::from(vec![3, 4]));
+    let name_array2: ArrayRef = Arc::new(StringArray::from(vec![Some("third"), Some("fourth")]));
+    let geom_array2: ArrayRef = Arc::new(StringArray::from(vec![
+        Some("POINT(2 2)"),
+        Some("POINT(3 3)"),
+    ]));
+    let batch2 =
+        RecordBatch::try_new(schema.clone(), vec![id_array2, name_array2, geom_array2]).unwrap();
+
+    let sink2 = GeoJsonSink::new(config_append, writer_options);
+    let stream2: SendableRecordBatchStream = Box::pin(RecordBatchStreamAdapter::new(
+        schema.clone(),
+        stream::iter(vec![Ok(batch2)]),
+    ));
+
+    let row_count2 = sink2.write_all(stream2, &context).await.unwrap();
+    assert_eq!(row_count2, 2);
+
+    // Verify both sets of data are present (appended, not overwritten)
+    let contents = fs::read_to_string(output_path).unwrap();
+    assert!(contents.contains("\"id\":1"));
+    assert!(contents.contains("\"name\":\"first\""));
+    assert!(contents.contains("\"id\":2"));
+    assert!(contents.contains("\"name\":\"second\""));
+    assert!(contents.contains("\"id\":3"));
+    assert!(contents.contains("\"name\":\"third\""));
+    assert!(contents.contains("\"id\":4"));
+    assert!(contents.contains("\"name\":\"fourth\""));
+
+    // Should have 4 lines (newline-delimited format)
+    let line_count = contents.lines().count();
+    assert_eq!(line_count, 4);
+}
