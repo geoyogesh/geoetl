@@ -31,5 +31,6 @@ pub fn initialize() {
         // Register all format drivers
         datafusion_csv::register_csv_format();
         datafusion_geojson::register_geojson_format();
+        datafusion_geoparquet::register_geoparquet_format();
     });
 }

@@ -18,6 +18,7 @@ arrow-schema.workspace = true
 geoetl-core-common = { path = "../geoetl-core-common" }
 datafusion-csv = { path = "../formats/datafusion-csv" }
 datafusion-geojson = { path = "../formats/datafusion-geojson" }
+datafusion-geoparquet = { path = "../formats/datafusion-geoparquet" }
 
 [package.metadata.docs.rs]
 # Configure docs.rs to build documentation for this crate
