@@ -65,41 +65,69 @@ fn geoarrow_to_geojson_geometry(
     geom_field: &arrow_schema::Field,
     row_idx: usize,
 ) -> Result<Option<geojson::Geometry>> {
-    use geoarrow_array::array::GeometryArray;
+    use geoarrow_array::array::{
+        GeometryArray, LineStringArray, MultiLineStringArray, MultiPointArray, MultiPolygonArray,
+        PointArray, PolygonArray,
+    };
     use geozero::ToJson;
 
-    // Try to convert from Arrow array to GeometryArray (supports all geometry types)
-    let geometry_array_result = GeometryArray::try_from((geom_array, geom_field));
+    // Try to convert from Arrow array to the appropriate geometry array type
+    // First try generic GeometryArray, then try specific types
+    if let Ok(geom_arr) = GeometryArray::try_from((geom_array, geom_field)) {
+        // Check if the value at this row is null
+        if geom_arr.is_null(row_idx) {
+            return Ok(None);
+        }
 
-    match geometry_array_result {
-        Ok(geom_arr) => {
-            // Check if the value at this row is null
-            if geom_arr.is_null(row_idx) {
-                return Ok(None);
-            }
+        // Get the geometry scalar at this row index
+        let geom = geom_arr
+            .value(row_idx)
+            .map_err(|e| DataFusionError::External(Box::new(e)))?;
 
-            // Get the geometry scalar at this row index using GeoArrowArrayAccessor
-            let geom = geom_arr
-                .value(row_idx)
-                .map_err(|e| DataFusionError::External(Box::new(e)))?;
+        let geojson_string = geom
+            .to_json()
+            .map_err(|e| DataFusionError::External(Box::new(e)))?;
 
-            let geojson_string = geom
-                .to_json()
-                .map_err(|e| DataFusionError::External(Box::new(e)))?;
+        // Parse the GeoJSON string into a geojson::Geometry
+        let geometry: geojson::Geometry = serde_json::from_str(&geojson_string)
+            .map_err(|e| DataFusionError::External(Box::new(e)))?;
 
-            // Parse the GeoJSON string into a geojson::Geometry
-            let geometry: geojson::Geometry = serde_json::from_str(&geojson_string)
-                .map_err(|e| DataFusionError::External(Box::new(e)))?;
-
-            Ok(Some(geometry))
-        },
-        Err(e) => {
-            // Log the error for debugging
-            eprintln!("DEBUG: Failed to convert to GeometryArray: {e:?}");
-            // Not a GeoArrow geometry column
-            Ok(None)
-        },
+        return Ok(Some(geometry));
     }
+
+    // Try specific geometry types
+    macro_rules! try_geometry_type {
+        ($array_type:ty) => {
+            if let Ok(geom_arr) = <$array_type>::try_from((geom_array, geom_field)) {
+                if geom_arr.is_null(row_idx) {
+                    return Ok(None);
+                }
+
+                let geom = geom_arr
+                    .value(row_idx)
+                    .map_err(|e| DataFusionError::External(Box::new(e)))?;
+
+                let geojson_string = geom
+                    .to_json()
+                    .map_err(|e| DataFusionError::External(Box::new(e)))?;
+
+                let geometry: geojson::Geometry = serde_json::from_str(&geojson_string)
+                    .map_err(|e| DataFusionError::External(Box::new(e)))?;
+
+                return Ok(Some(geometry));
+            }
+        };
+    }
+
+    try_geometry_type!(PointArray);
+    try_geometry_type!(LineStringArray);
+    try_geometry_type!(PolygonArray);
+    try_geometry_type!(MultiPointArray);
+    try_geometry_type!(MultiLineStringArray);
+    try_geometry_type!(MultiPolygonArray);
+
+    // Not a recognized GeoArrow geometry column
+    Ok(None)
 }
 
 /// Convert Arrow value to JSON value

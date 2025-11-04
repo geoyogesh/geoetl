@@ -113,6 +113,8 @@ impl DataSink for CsvSink {
         _context: &Arc<TaskContext>,
     ) -> Result<u64> {
         use arrow_csv::WriterBuilder;
+        use datafusion::logical_expr::dml::InsertOp;
+        use std::fs::OpenOptions;
 
         // Write to output - for now write to a single file
         let output_path = self
@@ -130,9 +132,28 @@ impl DataSink for CsvSink {
             url_str
         };
 
-        // Create CSV writer
-        let mut file =
-            std::fs::File::create(file_path).map_err(|e| DataFusionError::External(Box::new(e)))?;
+        // Open file based on insert operation mode
+        let mut file = match self.config.insert_op {
+            InsertOp::Overwrite => {
+                // Overwrite mode: create or truncate the file
+                std::fs::File::create(file_path)
+                    .map_err(|e| DataFusionError::External(Box::new(e)))?
+            },
+            InsertOp::Append => {
+                // Append mode: open for appending or create if doesn't exist
+                OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(file_path)
+                    .map_err(|e| DataFusionError::External(Box::new(e)))?
+            },
+            InsertOp::Replace => {
+                return Err(DataFusionError::NotImplemented(format!(
+                    "Insert operation {:?} is not supported for CSV",
+                    self.config.insert_op
+                )));
+            },
+        };
 
         let mut builder = WriterBuilder::new()
             .with_delimiter(self.writer_options.delimiter)

@@ -100,6 +100,13 @@ fn prepare_reader_options(
             let options = GeoJsonFormatOptions::default().with_batch_size(batch_size);
             Ok(Box::new(options))
         },
+        "GeoParquet" => {
+            use datafusion_geoparquet::GeoParquetFormatOptions;
+            let options = GeoParquetFormatOptions::default()
+                .with_batch_size(batch_size)
+                .with_geometry_column_name(geometry_column);
+            Ok(Box::new(options))
+        },
         _ => Err(DriverError::NotRegistered {
             driver: driver_name.to_string(),
         }
@@ -342,6 +349,8 @@ pub async fn convert(
         .map_err(|e| GeoEtlError::from(anyhow::anyhow!("Invalid output path: {e}")))?;
 
     // Create FileSinkConfig
+    // Use Overwrite mode for all formats in convert operations
+    // This ensures we replace the output file if it already exists
     let config = FileSinkConfig {
         original_url: output.to_string(),
         object_store_url: table_path.object_store(),
@@ -349,7 +358,7 @@ pub async fn convert(
         table_paths: vec![table_path],
         output_schema: physical_plan.schema(),
         table_partition_cols: vec![],
-        insert_op: InsertOp::Append,
+        insert_op: InsertOp::Overwrite,
         keep_partition_by_columns: false,
         file_extension: output_driver.short_name.to_lowercase(),
     };

@@ -193,10 +193,11 @@ mod tests {
     fn test_list_read_write_drivers() {
         crate::init::initialize();
         let drivers = list_drivers_with_capability(true, true, false);
-        // GeoJSON and CSV are supported
-        assert_eq!(drivers.len(), 2);
+        // GeoJSON, CSV, and GeoParquet are supported
+        assert_eq!(drivers.len(), 3);
         assert!(drivers.iter().any(|d| d.short_name == "GeoJSON"));
         assert!(drivers.iter().any(|d| d.short_name == "CSV"));
+        assert!(drivers.iter().any(|d| d.short_name == "GeoParquet"));
     }
 
     #[test]
@@ -204,9 +205,10 @@ mod tests {
         crate::init::initialize();
         let drivers = get_available_drivers();
         // Should have drivers with at least one Supported operation
-        assert_eq!(drivers.len(), 2);
+        assert_eq!(drivers.len(), 3);
         assert!(drivers.iter().any(|d| d.short_name == "GeoJSON"));
         assert!(drivers.iter().any(|d| d.short_name == "CSV"));
+        assert!(drivers.iter().any(|d| d.short_name == "GeoParquet"));
     }
 
     #[test]
