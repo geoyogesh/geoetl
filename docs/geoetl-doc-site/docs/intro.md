@@ -16,7 +16,7 @@ GeoETL is designed to be a next-generation alternative to traditional geospatial
 - **Memory Safety**: Built with Rust for guaranteed memory safety
 - **Modern Architecture**: Leverages Apache DataFusion and Apache Arrow
 - **Scalability**: From single-machine to distributed processing (coming soon)
-- **68+ Format Drivers**: Support for GeoJSON, CSV, Shapefile, GeoPackage, and more
+- **3 Format Drivers**: GeoJSON, CSV, and GeoParquet ([see all supported drivers](./reference/supported-drivers))
 
 ## What You'll Learn
 
@@ -62,7 +62,15 @@ tar -xzf geoetl-cli-*.tar.gz  # Linux/macOS
 ./geoetl-cli drivers
 ```
 
-You should see a table of 68+ supported format drivers!
+You should see a table of supported format drivers (currently 3: GeoJSON, CSV, GeoParquet). See the complete [Supported Drivers Reference](./reference/supported-drivers) for details!
+
+**Try GeoParquet** (new in v0.3.0):
+
+```bash
+# Convert GeoJSON to efficient GeoParquet (6.8x smaller!)
+./geoetl-cli convert -i data.geojson -o data.parquet \
+  --input-driver GeoJSON --output-driver GeoParquet
+```
 
 **→ See the [Installation Guide](./tutorial-basics/installation) for detailed step-by-step instructions.**
 
@@ -73,23 +81,26 @@ Get started with these beginner-friendly tutorials:
 1. **[Installation Guide](./tutorial-basics/installation)** - Get GeoETL up and running
 2. **[Your First Conversion](./tutorial-basics/first-conversion)** - Convert a GeoJSON file
 3. **[Understanding Drivers](./tutorial-basics/understanding-drivers)** - Learn about format support
-4. **[Working with CSV](./tutorial-basics/working-with-csv)** - CSV and WKT geometries
-5. **[Common Operations](./tutorial-basics/common-operations)** - Essential commands
+4. **[Working with GeoJSON](./tutorial-basics/working-with-geojson)** - Web-standard format
+5. **[Working with CSV](./tutorial-basics/working-with-csv)** - CSV and WKT geometries
+6. **[Working with GeoParquet](./tutorial-basics/working-with-geoparquet)** - High-performance columnar format
+7. **[Error Handling & Troubleshooting](./tutorial-basics/troubleshooting)** - Debug and resolve issues
 
 ## Current Status
 
-GeoETL is in **Phase 1 (Complete)**. Here's what works today:
+GeoETL is in **Phase 1 (Complete)** with v0.3.0 adding GeoParquet support. Here's what works today:
 
 ✅ **Working Now**:
 - CSV format (read/write with WKT geometries)
 - GeoJSON format (full read/write support)
-- Convert command (CSV ↔ GeoJSON conversions)
+- **GeoParquet format** (full read/write with WKB geometries) - **New in v0.3.0!**
+- Convert command (CSV ↔ GeoJSON ↔ GeoParquet conversions)
 - Info command (dataset schema inspection)
 - Driver registry and capability checking
 - Comprehensive error messages with helpful examples
 
 🚧 **Coming Soon** (Q1-Q2 2026):
-- GeoPackage, Shapefile, Parquet drivers
+- GeoPackage, Shapefile, FlatGeobuf drivers
 - Spatial operations (buffer, intersection, union)
 - CRS transformations
 
@@ -111,9 +122,11 @@ Ready to dive in?
 👉 **[Start with the Installation Guide →](./tutorial-basics/installation)**
 
 Or jump to:
+- [Supported Drivers Reference](./reference/supported-drivers) - Complete driver documentation
 - [Your First Conversion](./tutorial-basics/first-conversion) - Quick hands-on tutorial
 - [Understanding Drivers](./tutorial-basics/understanding-drivers) - Learn format support
-- [Common Operations](./tutorial-basics/common-operations) - Essential commands
+- [Working with GeoJSON](./tutorial-basics/working-with-geojson) - Web-standard format
+- [Working with GeoParquet](./tutorial-basics/working-with-geoparquet) - Modern columnar format
 
 ---
 

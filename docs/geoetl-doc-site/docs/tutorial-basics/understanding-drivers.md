@@ -4,7 +4,7 @@ sidebar_position: 3
 
 # Understanding Drivers
 
-Learn about GeoETL's driver system and the 68+ supported geospatial formats.
+Learn about GeoETL's driver system and supported geospatial formats.
 
 ## What are Drivers?
 
@@ -30,6 +30,8 @@ This shows a table with:
 - **Read**: Read capability status
 - **Write**: Write capability status
 
+**See also**: [Supported Drivers Reference](../reference/supported-drivers) - Complete driver documentation with examples and comparisons
+
 ### Support Status
 
 Each capability has one of three statuses:
@@ -44,7 +46,7 @@ Each capability has one of three statuses:
 
 ### CSV - Comma Separated Value
 
-**Status**: ✅ Fully Supported
+**Status**: ✅ Fully Supported (v0.1.0+)
 
 **Use cases**:
 - Simple tabular data with geometries
@@ -69,7 +71,7 @@ id,name,population,wkt
 
 ### GeoJSON - Geographic JSON
 
-**Status**: ✅ Fully Supported
+**Status**: ✅ Fully Supported (v0.1.0+)
 
 **Use cases**:
 - Web mapping applications
@@ -101,6 +103,72 @@ geoetl-cli convert -i data.geojson -o data.csv \
   ]
 }
 ```
+
+### GeoParquet - Columnar Geospatial Format
+
+**Status**: ✅ Fully Supported (New in v0.3.0!)
+
+**Use cases**:
+- Large-scale geospatial data (100M+ features)
+- Cloud storage optimization (6.8x smaller than GeoJSON)
+- Modern data pipelines (DuckDB, Apache Arrow, Spark)
+- High-performance analytics (columnar format)
+- Efficient archival storage
+
+**Geometry format**: WKB (Well-Known Binary) with GeoArrow types
+
+**Performance highlights**:
+- 🏆 **Best overall performance**: 3,315 MB/min throughput (11x faster than GeoJSON!)
+- 📦 **Best compression**: 6.8x smaller than GeoJSON, 1.9x smaller than CSV
+- ⚡ **Sub-second processing**: 100k features in &lt;1 second
+- 💾 **Memory efficient**: Minimal memory usage with streaming architecture
+- 🚀 **Production-ready**: Handles 100M+ features efficiently
+
+**Example**:
+```bash
+# GeoJSON to GeoParquet (6.8x compression!)
+geoetl-cli convert -i data.geojson -o data.parquet \
+  --input-driver GeoJSON --output-driver GeoParquet
+
+# CSV to GeoParquet (1.9x compression)
+geoetl-cli convert -i data.csv -o data.parquet \
+  --input-driver CSV --output-driver GeoParquet \
+  --geometry-column WKT
+
+# GeoParquet roundtrip (ultra-fast)
+geoetl-cli convert -i input.parquet -o output.parquet \
+  --input-driver GeoParquet --output-driver GeoParquet
+```
+
+**When to use GeoParquet**:
+- ✅ Working with large datasets (1M+ features)
+- ✅ Storage efficiency is critical
+- ✅ Query performance matters (columnar format enables fast filtering)
+- ✅ Integration with modern tools (QGIS, DuckDB, Python/GeoPandas)
+- ✅ Cloud storage (smaller files = lower costs)
+- ✅ Data archival (best compression + standard format)
+
+**Sample GeoParquet inspection**:
+```bash
+# GeoParquet is binary format - use tools to inspect:
+
+# parquet-tools (install: pip install parquet-tools)
+parquet-tools schema data.parquet
+parquet-tools head data.parquet
+
+# DuckDB (SQL queries)
+duckdb -c "SELECT * FROM 'data.parquet' LIMIT 10"
+
+# Convert to GeoJSON for viewing
+geoetl-cli convert -i data.parquet -o temp.geojson \
+  --input-driver GeoParquet --output-driver GeoJSON
+```
+
+**Learn more**:
+- 📚 [Working with GeoParquet Tutorial](./working-with-geoparquet) - Complete guide
+- 📊 [Benchmark Results](https://github.com/geoyogesh/geoetl/blob/main/bench/README.md#geoparquet-performance) - Performance data
+- 🏗️ [Architecture ADR](https://github.com/geoyogesh/geoetl/blob/main/docs/adr/004-streaming-geoparquet-architecture.md) - Technical deep dive
+- 🌐 [GeoParquet Specification](https://geoparquet.org/) - Format specification
 
 ## Planned Drivers (Coming Soon)
 
@@ -134,20 +202,6 @@ geoetl-cli convert -i data.geojson -o data.csv \
 - Attribute data
 - Coordinate systems
 
-#### Parquet / GeoParquet
-**Status**: 🚧 Planned
-
-**Use cases**:
-- Big data analytics
-- Cloud storage optimization
-- Columnar format benefits
-- Fast querying
-
-**Will support**:
-- Efficient compression
-- Column pruning
-- Predicate pushdown
-- Metadata preservation
 
 #### FlatGeobuf (FGB)
 **Status**: 🚧 Planned
@@ -167,13 +221,13 @@ geoetl-cli convert -i data.geojson -o data.csv \
 
 ### Vector Formats
 
-**Core Formats** (2 working, more planned):
+**Core Formats** (3 working, more planned):
 - ✅ GeoJSON, GeoJSONSeq
 - ✅ CSV (with WKT)
+- ✅ GeoParquet
 - 🚧 ESRI Shapefile
 - 🚧 GeoPackage (GPKG)
 - 🚧 FlatGeobuf
-- 🚧 (Geo)Parquet
 - 🚧 (Geo)Arrow IPC
 
 ### Database Formats
@@ -214,16 +268,17 @@ Use this guide to select the best format:
 - Wide browser support
 
 ### For Data Analysis
-→ **CSV** (now) or **Parquet** (coming soon)
-- Excel/spreadsheet compatible
-- Easy to inspect
-- Good for small-medium datasets
+→ **GeoParquet** (best) or **CSV** (simple)
+- Columnar format for fast queries
+- Efficient compression
+- Modern analytics tools (DuckDB, Arrow, Spark)
 
-### For Large Datasets
-→ **GeoPackage** or **Parquet** (coming soon)
-- Efficient storage
-- Spatial indexing
-- Query performance
+### For Large Datasets (1M+ features)
+→ **GeoParquet** 🏆
+- 6.8x smaller than GeoJSON
+- 3,315 MB/min throughput
+- Minimal memory usage
+- Production-ready at scale
 
 ### For GIS Software Compatibility
 → **Shapefile** or **GeoPackage** (coming soon)
@@ -232,10 +287,11 @@ Use this guide to select the best format:
 - Metadata preservation
 
 ### For Cloud/Big Data
-→ **Parquet** or **FlatGeobuf** (coming soon)
+→ **GeoParquet** 🏆
 - Columnar storage
+- Best compression (6.8x over GeoJSON)
 - Cloud-optimized
-- Compression
+- Works with modern data stacks
 
 ## Using Drivers in Commands
 
@@ -316,9 +372,9 @@ Different drivers handle geometries differently:
 |--------|----------------|---------|
 | GeoJSON | Native GeoJSON | `{"type": "Point", "coordinates": [x, y]}` |
 | CSV | WKT (Well-Known Text) | `"POINT(x y)"` |
+| **GeoParquet** | **WKB (Well-Known Binary)** | **(columnar binary)** |
 | Shapefile | Binary format | (not human-readable) |
 | GeoPackage | Binary format | (not human-readable) |
-| Parquet | GeoArrow/WKB | (columnar binary) |
 
 **WKT Examples**:
 ```
@@ -326,31 +382,6 @@ POINT(x y)
 LINESTRING(x1 y1, x2 y2, x3 y3)
 POLYGON((x1 y1, x2 y2, x3 y3, x1 y1))
 MULTIPOINT((x1 y1), (x2 y2))
-```
-
-## Common Driver Combinations
-
-### GeoJSON ↔ CSV
-```bash
-# GeoJSON to CSV
-geoetl-cli convert -i data.geojson -o data.csv \
-  --input-driver GeoJSON --output-driver CSV
-
-# CSV to GeoJSON
-geoetl-cli convert -i data.csv -o data.geojson \
-  --input-driver CSV --output-driver GeoJSON \
-  --geometry-column wkt
-```
-
-### Round-trip Testing
-```bash
-# Original → CSV → Back
-geoetl-cli convert -i original.geojson -o temp.csv \
-  --input-driver GeoJSON --output-driver CSV
-
-geoetl-cli convert -i temp.csv -o recovered.geojson \
-  --input-driver CSV --output-driver GeoJSON \
-  --geometry-column geometry
 ```
 
 ## Future Driver Features
@@ -414,10 +445,11 @@ geoetl-cli convert --help
 
 Continue learning:
 
-👉 **Next: [Working with CSV](./working-with-csv)** - CSV-specific operations and tips
+👉 **Next: [Working with GeoJSON](./working-with-geojson)** - Web-standard format
 
 Or explore:
-- [Common Operations](./common-operations) - Essential commands and workflows
+- [Working with CSV](./working-with-csv) - CSV operations
+- [Working with GeoParquet](./working-with-geoparquet) - Modern columnar format
 
 ## Need Help?
 

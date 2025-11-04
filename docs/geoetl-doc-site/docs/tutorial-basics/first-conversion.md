@@ -318,11 +318,12 @@ Great work! You've completed your first conversion. 🎉
 
 Continue learning:
 
-👉 **Next: [Understanding Drivers](./understanding-drivers)** - Learn about all 68+ supported formats
+👉 **Next: [Understanding Drivers](./understanding-drivers)** - Learn about supported formats
 
 Or explore:
+- [Working with GeoJSON](./working-with-geojson) - Web-standard format
 - [Working with CSV](./working-with-csv) - Advanced CSV operations
-- [Common Operations](./common-operations) - More commands and options
+- [Working with GeoParquet](./working-with-geoparquet) - Modern columnar format
 
 ## Quick Reference
 

@@ -1,5 +1,5 @@
 ---
-sidebar_position: 6
+sidebar_position: 7
 ---
 
 # Error Handling & Troubleshooting
@@ -339,8 +339,8 @@ geoetl-cli convert -i input.csv -o output.geojson \
 If you're still experiencing problems:
 
 1. **Check the Documentation**
-   - Review the [Common Operations](./common-operations) guide
    - Read format-specific guides like [Working with CSV](./working-with-csv)
+   - Review [Working with GeoParquet](./working-with-geoparquet) for columnar format
 
 2. **Search GitHub Issues**
    - Check if someone else had the same problem

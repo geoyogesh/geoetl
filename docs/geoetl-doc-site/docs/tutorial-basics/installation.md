@@ -76,12 +76,13 @@ Let's verify everything works by listing available drivers:
 # List all supported format drivers
 geoetl-cli drivers
 
-# You should see a table with 68+ drivers
+# You should see a table with available drivers
+# See: https://docs link to supported-drivers reference
 ```
 
 Expected output:
 ```
-Available Drivers (68 total):
+Available Drivers (3 total):
 
 ┌─────────────────────┬──────────────────────────────┬────────────┬────────────┬────────────┐
 │ Short Name          │ Long Name                    │ Info       │ Read       │ Write      │
@@ -140,9 +141,10 @@ Congratulations! GeoETL is now installed. 🎉
 👉 **Continue to: [Your First Conversion](./first-conversion)** - Learn to convert your first geospatial file
 
 Or explore:
+- [Supported Drivers Reference](../reference/supported-drivers) - Complete driver documentation
 - [Understanding Drivers](./understanding-drivers) - Learn about format support
 - [Working with CSV](./working-with-csv) - CSV-specific operations
-- [Common Operations](./common-operations) - Essential commands
+- [Working with GeoParquet](./working-with-geoparquet) - Modern columnar format
 
 ## Getting Help
 

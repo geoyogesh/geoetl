@@ -1,5 +1,5 @@
 ---
-sidebar_position: 4
+sidebar_position: 5
 ---
 
 # Working with CSV
@@ -473,7 +473,10 @@ geoetl-cli -v convert -i data.csv -o data.geojson \
 
 Continue learning:
 
-👉 **Next: [Common Operations](./common-operations)** - Essential GeoETL commands and workflows
+👉 **Next: [Working with GeoParquet](./working-with-geoparquet)** - Learn about the modern columnar format
+
+Or explore:
+- [Working with GeoJSON](./working-with-geojson) - Web-standard format
 
 ## Need Help?
 
