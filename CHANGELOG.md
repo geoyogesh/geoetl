@@ -5,6 +5,98 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2025-11-04
+
+### Added
+
+- **GeoParquet Format Support** ([ADR 004](docs/adr/004-streaming-geoparquet-architecture.md))
+  - Implemented production-ready GeoParquet format with Apache Arrow and GeoArrow integration
+  - Full read/write support with WKB (Well-Known Binary) geometry encoding
+  - Streaming architecture with O(1) memory complexity
+  - Native GeoArrow types: Point, LineString, Polygon, MultiPoint, MultiLineString, MultiPolygon
+  - Schema preservation and GeoParquet metadata handling (CRS, bbox)
+  - DataFusion FileFormat and DataSink integration
+
+- **InsertOp::Overwrite Support**
+  - Added Overwrite mode for GeoJSON writer
+  - Added Overwrite mode for CSV writer
+  - Enables file replacement without manual deletion
+
+- **E2E Test Infrastructure for GeoParquet**
+  - Comprehensive E2E tests with natural-earth dataset
+  - GeoParquet roundtrip conversion tests
+  - Cross-format conversion tests (GeoJSON ↔ GeoParquet, CSV ↔ GeoParquet)
+  - Test data: natural-earth_cities.parquet (15KB, 243 features)
+
+- **Comprehensive Documentation**
+  - **New Tutorials**:
+    - [Working with GeoParquet](docs/geoetl-doc-site/docs/tutorial-basics/working-with-geoparquet.md) - Complete GeoParquet guide (374 lines)
+    - [Working with GeoJSON](docs/geoetl-doc-site/docs/tutorial-basics/working-with-geojson.md) - Complete GeoJSON guide (581 lines)
+  - **New Reference Pages**:
+    - [Supported Drivers](docs/geoetl-doc-site/docs/reference/supported-drivers.md) - Complete driver documentation (382 lines)
+  - **Blog Post**: [GeoETL v0.3.0: GeoParquet Support](docs/geoetl-doc-site/blog/2025-11-04-geoparquet-support-v0-3-0.md)
+  - **Updated Documentation**:
+    - Updated intro.md with GeoParquet features and accurate driver count (3 supported)
+    - Enhanced understanding-drivers.md with GeoParquet section and performance metrics
+    - Updated all tutorials with GeoParquet references and navigation
+
+- **GeoParquet Benchmarks** ([bench/README.md](bench/README.md#geoparquet-performance))
+  - Added comprehensive GeoParquet benchmark suite
+  - Performance comparison tables for all three formats
+  - Conversion benchmark commands and results
+  - Analysis of compression, throughput, and memory efficiency
+
+### Changed
+
+- **Documentation Structure**
+  - Removed common-operations.md (694 lines) - consolidated into format-specific tutorials
+  - Reorganized tutorial flow: Installation → First Conversion → Drivers → GeoJSON → CSV → GeoParquet → Troubleshooting
+  - Added Reference section with Supported Drivers page
+  - Updated all cross-references and navigation links
+
+- **Driver Count Accuracy**
+  - Updated documentation from "68+ drivers" to accurate "3 drivers (GeoJSON, CSV, GeoParquet)"
+  - Added note about 68+ planned drivers via GDAL integration
+  - Updated all driver count references throughout documentation
+
+### Performance
+
+**GeoParquet Benchmarks** (Microsoft Buildings: 1M features):
+- **Roundtrip**: 1 second, 33.15 MB → 35.03 MB
+- **Throughput**: 3,315 MB/min (11x faster than GeoJSON)
+- **Memory**: Minimal (<250 MB peak)
+- **Compression**: 6.8x smaller than GeoJSON, 1.9x smaller than CSV
+- **Status**: ✅ Production-ready
+
+**Format Conversions** (1M features):
+- **GeoJSON → GeoParquet**: 2s, 114.13 MB → 16.86 MB (6.8x compression), 3,804 MB/min
+- **CSV → GeoParquet**: 1s, 32.11 MB → 16.86 MB (1.9x compression), 3,211 MB/min
+- **GeoParquet → GeoJSON**: 14s, 33.15 MB → 1,763 MB
+
+**Comparison Table** (1M features):
+
+| Format | Throughput | Duration | File Size | Compression vs GeoJSON |
+|--------|-----------|----------|-----------|----------------------|
+| GeoJSON | 300 MB/min | 23s | 114.13 MB | Baseline |
+| CSV | 3,211 MB/min | 1s | 32.11 MB | 3.5x smaller |
+| **GeoParquet** | **3,315 MB/min** | **1s** | **16.86 MB** | **6.8x smaller** 🏆 |
+
+**Winner**: 🏆 **GeoParquet**
+- Best throughput (tied with CSV at 3,200+ MB/min)
+- Best compression (6.8x over GeoJSON)
+- Best for large-scale data, storage, modern pipelines, analytics
+
+### Dependencies
+
+- Added `parquet` v53.3.0
+- Added `geoarrow` v0.5.0
+
+### Breaking Changes
+
+None
+
+---
+
 ## [0.2.0] - 2025-11-03
 
 ### Added
