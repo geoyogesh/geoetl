@@ -10,7 +10,7 @@ mod writer;
 pub use factory::register_geojson_format;
 pub use file_format::GeoJsonFormatOptions;
 pub use file_source::GeoJsonSourceBuilder;
-pub use sink::{GeoJsonSink, GeoJsonWriterExec};
+pub use sink::GeoJsonSink;
 pub use writer::{GeoJsonWriterOptions, write_geojson, write_geojson_to_bytes};
 
 use datafusion::prelude::*;
