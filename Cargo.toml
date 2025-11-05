@@ -1,10 +1,15 @@
 # geoetl/Cargo.toml
 [workspace]
 members = [
+  "crates/formats/datafusion-arrow",
   "crates/formats/datafusion-csv",
   "crates/formats/datafusion-flatgeobuf",
   "crates/formats/datafusion-geojson",
+  "crates/formats/datafusion-geojsonseq",
+  "crates/formats/datafusion-geopackage",
   "crates/formats/datafusion-geoparquet",
+  "crates/formats/datafusion-osm",
+  "crates/formats/datafusion-shapefile",
   "crates/formats/datafusion-shared",
   "crates/geoetl-cli",
   "crates/geoetl-core",

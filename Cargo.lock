@@ -913,6 +913,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "datafusion-arrow"
+version = "0.3.0"
+
+[[package]]
 name = "datafusion-catalog"
 version = "50.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1377,6 +1381,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "datafusion-geojsonseq"
+version = "0.3.0"
+
+[[package]]
+name = "datafusion-geopackage"
+version = "0.3.0"
+
+[[package]]
 name = "datafusion-geoparquet"
 version = "0.3.0"
 dependencies = [
@@ -1435,6 +1447,10 @@ dependencies = [
  "regex",
  "regex-syntax",
 ]
+
+[[package]]
+name = "datafusion-osm"
+version = "0.3.0"
 
 [[package]]
 name = "datafusion-physical-expr"
@@ -1580,6 +1596,10 @@ dependencies = [
  "parking_lot",
  "tokio",
 ]
+
+[[package]]
+name = "datafusion-shapefile"
+version = "0.3.0"
 
 [[package]]
 name = "datafusion-shared"
