@@ -14,9 +14,12 @@ use datafusion::datasource::listing::{ListingTable, ListingTableConfig, ListingT
 use datafusion::datasource::physical_plan::{FileMeta, FileOpenFuture, FileOpener};
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::context::SessionState;
-use futures::StreamExt;
-use futures::stream::BoxStream;
-use object_store::ObjectStore;
+use futures::stream::{BoxStream, StreamExt, TryStreamExt};
+use geoarrow_schema::CoordType;
+use geoparquet::metadata::GeoParquetMetadata;
+use geoparquet::reader::{GeoParquetReaderBuilder, GeoParquetRecordBatchStream};
+use object_store::{ObjectStore, path::Path as ObjectPath};
+use parquet::arrow::async_reader::{ParquetObjectReader, ParquetRecordBatchStreamBuilder};
 
 use crate::file_format::{GeoParquetFormat, GeoParquetFormatOptions};
 
@@ -113,88 +116,71 @@ impl FileOpener for GeoParquetOpener {
 
         Ok(Box::pin(async move {
             let location = file_meta.location();
+            let object_path = ObjectPath::from(location.as_ref());
 
-            // Read the entire file (GeoParquet files are typically compressed and efficient)
-            let get_result = object_store.get(location).await?;
-            let bytes = get_result.bytes().await?;
+            // 1. Use ParquetObjectReader to create an adapter for streaming reads
+            let reader = ParquetObjectReader::new(Arc::clone(&object_store), object_path);
 
-            // Use the geoparquet reader API
-            use geoarrow_schema::CoordType;
-            use geoparquet::reader::{GeoParquetReaderBuilder, GeoParquetRecordBatchReader};
-            use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
-
-            // Create a Parquet reader builder from bytes
-            let parquet_builder = ParquetRecordBatchReaderBuilder::try_new(bytes)
+            // 2. Build a ParquetRecordBatchStream for async reading
+            // This reads metadata without reading actual data
+            let mut builder = ParquetRecordBatchStreamBuilder::new(reader)
+                .await
                 .map_err(|e| DataFusionError::External(Box::new(e)))?;
 
-            // Check if GeoParquet metadata exists before consuming the builder
-            let maybe_geo_metadata = parquet_builder.geoparquet_metadata();
+            // Set batch size
+            builder = builder.with_batch_size(options.batch_size);
 
-            // Build the parquet reader (consumes builder)
-            let parquet_reader = parquet_builder
-                .with_batch_size(options.batch_size)
-                .build()
-                .map_err(|e| DataFusionError::External(Box::new(e)))?;
-
-            // Convert metadata result and handle appropriately
-            let reader: Box<dyn Iterator<Item = Result<RecordBatch>>> = match maybe_geo_metadata {
-                Some(Ok(geoparquet_meta)) => {
-                    // Rebuild the builder to get the schema (we can't use the consumed one)
-                    let get_result2 = object_store.get(location).await?;
-                    let bytes2 = get_result2.bytes().await?;
-                    let parquet_builder2 = ParquetRecordBatchReaderBuilder::try_new(bytes2)
-                        .map_err(|e| DataFusionError::External(Box::new(e)))?;
-
-                    // Get GeoArrow schema
-                    let geo_schema = parquet_builder2
-                        .geoarrow_schema(
-                            &geoparquet_meta,
-                            true, // parse_to_native: convert WKB to native geometry types
-                            CoordType::Interleaved,
-                        )
-                        .map_err(|e| DataFusionError::External(Box::new(e)))?;
-
-                    // Wrap with GeoParquet reader and convert errors
-                    let geo_reader =
-                        GeoParquetRecordBatchReader::try_new(parquet_reader, geo_schema)
-                            .map_err(|e| DataFusionError::External(Box::new(e)))?;
-                    Box::new(
-                        geo_reader.map(|r| r.map_err(|e| DataFusionError::External(Box::new(e)))),
-                    )
-                },
-                _ => {
-                    // Fall back to plain parquet reader
-                    Box::new(
-                        parquet_reader
-                            .map(|r| r.map_err(|e| DataFusionError::External(Box::new(e)))),
-                    )
-                },
-            };
-
-            // Read all record batches
-            let mut batches = Vec::new();
-            for maybe_batch in reader {
-                let batch = maybe_batch.map_err(|e| DataFusionError::External(Box::new(e)))?;
-
-                // Apply projection if needed
-                let projected_batch = if let Some(ref proj) = projection {
-                    let columns: Vec<_> = proj.iter().map(|&i| batch.column(i).clone()).collect();
-                    let projected_schema = Arc::new(arrow_schema::Schema::new(
-                        proj.iter()
-                            .map(|&i| batch.schema().field(i).clone())
-                            .collect::<Vec<_>>(),
-                    ));
-                    RecordBatch::try_new(projected_schema, columns)?
-                } else {
-                    batch
-                };
-
-                batches.push(projected_batch);
+            // Apply projection if provided
+            if let Some(ref proj) = projection {
+                let projection_mask = parquet::arrow::ProjectionMask::roots(
+                    builder.parquet_schema(),
+                    proj.iter().copied(),
+                );
+                builder = builder.with_projection(projection_mask);
             }
 
-            // Create a stream from the batches
-            let stream = futures::stream::iter(batches.into_iter().map(Ok));
-            Ok(stream.boxed() as BoxStream<'static, Result<RecordBatch>>)
+            // 3. Check for GeoParquet metadata to determine if this is a GeoParquet file
+            let maybe_geo_metadata = builder.geoparquet_metadata();
+
+            // 4. Build the core data stream and handle GeoParquet decoding
+            let stream: BoxStream<'static, Result<RecordBatch>> = if let Some(Ok(gp_meta)) =
+                maybe_geo_metadata
+            {
+                // 5. Create a decoding stream for GeoParquet with native geometry types
+                // Get the GeoArrow schema (what we want after decoding)
+                let geo_schema = builder
+                    .geoarrow_schema(
+                        &gp_meta,
+                        true, // parse_to_native: convert WKB to native geometry types
+                        CoordType::Interleaved,
+                    )
+                    .map_err(|e| DataFusionError::External(Box::new(e)))?;
+
+                // Build the parquet stream
+                let parquet_stream = builder
+                    .build()
+                    .map_err(|e| DataFusionError::External(Box::new(e)))?;
+
+                // Wrap with GeoParquetRecordBatchStream to decode WKB on the fly
+                let geo_stream = GeoParquetRecordBatchStream::try_new(parquet_stream, geo_schema)
+                    .map_err(|e| DataFusionError::External(Box::new(e)))?;
+
+                geo_stream
+                    .map(|result| result.map_err(|e| DataFusionError::External(Box::new(e))))
+                    .boxed()
+            } else {
+                // 6. Handle plain Parquet - just pass through without decoding
+                let parquet_stream = builder
+                    .build()
+                    .map_err(|e| DataFusionError::External(Box::new(e)))?;
+
+                parquet_stream
+                    .map(|result| result.map_err(|e| DataFusionError::External(Box::new(e))))
+                    .boxed()
+            };
+
+            // 7. Return the final streaming result
+            Ok(stream)
         }))
     }
 }

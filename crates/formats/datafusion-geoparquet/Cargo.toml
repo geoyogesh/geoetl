@@ -23,7 +23,7 @@ datafusion-shared = { path = "../datafusion-shared" }
 futures = { workspace = true }
 geoarrow-array = { workspace = true, features = ["geozero"] }
 geoarrow-schema = { workspace = true }
-geoparquet = { workspace = true }
+geoparquet = { workspace = true, features = ["async"] }
 object_store = { workspace = true, features = ["aws", "azure", "gcp", "http"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 url = { workspace = true }

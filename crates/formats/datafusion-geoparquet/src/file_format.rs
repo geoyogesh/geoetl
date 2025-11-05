@@ -159,11 +159,46 @@ impl FileFormat for GeoParquetFormat {
     async fn infer_stats(
         &self,
         _state: &dyn Session,
-        _store: &Arc<dyn ObjectStore>,
+        store: &Arc<dyn ObjectStore>,
         table_schema: SchemaRef,
-        _object: &ObjectMeta,
+        object: &ObjectMeta,
     ) -> Result<Statistics> {
-        Ok(Statistics::new_unknown(&table_schema))
+        // Read Parquet metadata to extract statistics for query optimization
+        // This allows DataFusion to skip row groups or files based on min/max values
+        use object_store::path::Path as ObjectPath;
+        use parquet::arrow::ParquetRecordBatchStreamBuilder;
+        use parquet::arrow::async_reader::ParquetObjectReader;
+
+        // Create reader for the Parquet file
+        let object_path = ObjectPath::from(object.location.as_ref());
+        let reader = ParquetObjectReader::new(Arc::clone(store), object_path);
+
+        // Build metadata reader
+        let builder = ParquetRecordBatchStreamBuilder::new(reader)
+            .await
+            .map_err(|e| datafusion::error::DataFusionError::External(Box::new(e)))?;
+
+        // Get file metadata
+        let file_metadata = builder.metadata();
+
+        // Extract statistics from Parquet metadata
+        let num_row_groups = file_metadata.num_row_groups();
+
+        // Calculate total row count across all row groups
+        let mut total_rows = 0;
+        for rg_idx in 0..num_row_groups {
+            total_rows += usize::try_from(file_metadata.row_group(rg_idx).num_rows()).unwrap_or(0);
+        }
+
+        // For now, just return row count statistics
+        // Full column-level statistics (min/max/null_count) would require
+        // mapping Parquet column statistics to Arrow schema fields
+        let mut stats = Statistics::new_unknown(&table_schema);
+        stats.num_rows = datafusion_common::stats::Precision::Exact(total_rows);
+        stats.total_byte_size =
+            datafusion_common::stats::Precision::Exact(object.size.try_into().unwrap_or(0));
+
+        Ok(stats)
     }
 
     async fn create_physical_plan(

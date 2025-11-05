@@ -4,6 +4,8 @@ use std::io::Write as IoWrite;
 
 use arrow_array::RecordBatch;
 use datafusion_common::{DataFusionError, Result};
+use datafusion_execution::SendableRecordBatchStream;
+use futures::StreamExt;
 use geoparquet::writer::GeoParquetWriterOptions as GpWriterOptions;
 use parquet::arrow::ArrowWriter;
 use parquet::file::properties::WriterProperties;
@@ -58,7 +60,101 @@ impl GeoParquetWriterOptions {
     }
 }
 
-/// Write record batches to `GeoParquet` format
+/// Write record batches from a stream to `GeoParquet` format
+///
+/// This is the streaming implementation that accepts a `SendableRecordBatchStream`.
+/// It processes batches one at a time without buffering all data in memory.
+///
+/// # Errors
+///
+/// Returns an error if writing fails or if the geometry column is not found
+pub async fn write_geoparquet_stream<W: IoWrite + Send>(
+    writer: &mut W,
+    mut stream: SendableRecordBatchStream,
+    options: &GeoParquetWriterOptions,
+) -> Result<()> {
+    // 1. Pull the first batch from the stream to inspect schema
+    let first_batch = match stream.next().await {
+        Some(Ok(batch)) => batch,
+        Some(Err(e)) => return Err(e),
+        None => return Ok(()), // Empty stream
+    };
+
+    let schema = first_batch.schema();
+
+    // Find geometry column index to validate it exists
+    let geom_idx = schema
+        .fields()
+        .iter()
+        .position(|f| f.name() == &options.geometry_column_name);
+
+    if geom_idx.is_none() {
+        return Err(DataFusionError::Plan(format!(
+            "Geometry column '{}' not found in schema",
+            options.geometry_column_name
+        )));
+    }
+
+    // 2 & 3. Create encoder with default options
+    // We inline the options to avoid keeping them across await points
+    let mut encoder = geoparquet::writer::GeoParquetRecordBatchEncoder::try_new(
+        schema.as_ref(),
+        &GpWriterOptions::default(),
+    )
+    .map_err(|e| DataFusionError::External(Box::new(e)))?;
+
+    // Get the target schema for Parquet (WKB-encoded geometries)
+    let target_schema = encoder.target_schema();
+
+    // Set up Parquet writer properties
+    let props = WriterProperties::builder()
+        .set_compression(options.compression)
+        .set_max_row_group_size(options.row_group_size)
+        .build();
+
+    // 4. Initialize ArrowWriter
+    let mut arrow_writer = ArrowWriter::try_new(writer, target_schema.clone(), Some(props))
+        .map_err(|e| DataFusionError::External(Box::new(e)))?;
+
+    // 5. Stream and write data - encode and write the first batch
+    let encoded_batch = encoder
+        .encode_record_batch(&first_batch)
+        .map_err(|e| DataFusionError::External(Box::new(e)))?;
+    arrow_writer
+        .write(&encoded_batch)
+        .map_err(|e| DataFusionError::External(Box::new(e)))?;
+
+    // 6. Process remaining batches from the stream
+    // The ArrowWriter automatically handles row group creation based on row_group_size
+    while let Some(batch_result) = stream.next().await {
+        let batch = batch_result?;
+        let encoded_batch = encoder
+            .encode_record_batch(&batch)
+            .map_err(|e| DataFusionError::External(Box::new(e)))?;
+        arrow_writer
+            .write(&encoded_batch)
+            .map_err(|e| DataFusionError::External(Box::new(e)))?;
+    }
+
+    // 7. Write GeoParquet metadata before finalizing
+    // This must be done after encoding all batches but before calling finish()
+    let metadata_kv = encoder
+        .into_keyvalue()
+        .map_err(|e| DataFusionError::External(Box::new(e)))?;
+    arrow_writer.append_key_value_metadata(metadata_kv);
+
+    // 8. Finalize the writer - this writes the file footer with all metadata
+    arrow_writer
+        .finish()
+        .map_err(|e| DataFusionError::External(Box::new(e)))?;
+
+    Ok(())
+}
+
+/// Write record batches to `GeoParquet` format (non-streaming version)
+///
+/// This is a convenience function for non-streaming use cases.
+/// For streaming use cases, prefer `write_geoparquet_stream`.
 ///
 /// # Errors
 ///
@@ -104,33 +200,27 @@ pub fn write_geoparquet<W: IoWrite + Send>(
         .set_max_row_group_size(options.row_group_size)
         .build();
 
-    // Encode all batches first (since into_keyvalue consumes encoder)
-    let mut encoded_batches = Vec::new();
-    for batch in batches {
-        let encoded_batch = encoder
-            .encode_record_batch(batch)
-            .map_err(|e| DataFusionError::External(Box::new(e)))?;
-        encoded_batches.push(encoded_batch);
-    }
-
     // Create Parquet writer
     let mut arrow_writer = ArrowWriter::try_new(writer, target_schema.clone(), Some(props))
         .map_err(|e| DataFusionError::External(Box::new(e)))?;
 
-    // Write metadata (consumes encoder)
+    // Encode and write all batches
+    for batch in batches {
+        let encoded_batch = encoder
+            .encode_record_batch(batch)
+            .map_err(|e| DataFusionError::External(Box::new(e)))?;
+        arrow_writer
+            .write(&encoded_batch)
+            .map_err(|e| DataFusionError::External(Box::new(e)))?;
+    }
+
+    // Write GeoParquet metadata before finalizing
     let metadata_kv = encoder
         .into_keyvalue()
         .map_err(|e| DataFusionError::External(Box::new(e)))?;
     arrow_writer.append_key_value_metadata(metadata_kv);
 
-    // Write all encoded batches
-    for encoded_batch in &encoded_batches {
-        arrow_writer
-            .write(encoded_batch)
-            .map_err(|e| DataFusionError::External(Box::new(e)))?;
-    }
-
-    // Finish writing
+    // Finish writing - this writes the file footer with all metadata
     arrow_writer
         .finish()
         .map_err(|e| DataFusionError::External(Box::new(e)))?;
