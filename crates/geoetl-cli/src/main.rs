@@ -15,10 +15,12 @@
 //! - `convert` - Convert data between geospatial formats
 //! - `info` - Display dataset information and metadata
 //! - `drivers` - List all available format drivers and their capabilities
+//! - `completions` - Generate shell completion scripts (bash, zsh, fish, powershell, elvish)
 
 mod display;
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
+use clap_complete::{Shell, generate};
 use tabled::Table;
 use tracing::{Level, info};
 use tracing_log::LogTracer;
@@ -149,6 +151,33 @@ enum Commands {
     /// This command provides an overview of which formats can be read from,
     /// written to, and provide metadata information.
     Drivers,
+
+    /// Generates shell completion scripts for the specified shell.
+    ///
+    /// This command outputs a completion script that can be sourced by your shell
+    /// to enable tab completion for `geoetl` commands and arguments.
+    ///
+    /// # Examples
+    ///
+    /// For Bash:
+    /// ```bash
+    /// geoetl completions bash > ~/.local/share/bash-completion/completions/geoetl
+    /// ```
+    ///
+    /// For Zsh:
+    /// ```bash
+    /// geoetl completions zsh > ~/.zsh/completions/_geoetl
+    /// ```
+    ///
+    /// For Fish:
+    /// ```bash
+    /// geoetl completions fish > ~/.config/fish/completions/geoetl.fish
+    /// ```
+    Completions {
+        /// The shell to generate completions for.
+        #[arg(value_enum)]
+        shell: Shell,
+    },
 }
 
 /// Entry point for the `GeoETL` command-line interface.
@@ -238,6 +267,10 @@ async fn main() {
             .await
         },
         Commands::Drivers => handle_drivers(),
+        Commands::Completions { shell } => {
+            handle_completions(shell);
+            Ok(())
+        },
     };
 
     // Handle errors with user-friendly messages
@@ -427,6 +460,21 @@ fn handle_drivers() -> Result<(), GeoEtlError> {
     println!("{table}");
 
     Ok(())
+}
+
+/// Handles the `completions` subcommand by generating shell completion scripts.
+///
+/// Generates completion scripts for the specified shell and outputs them to stdout.
+/// The generated script can be sourced by the shell to enable tab completion for
+/// the `geoetl` CLI commands and arguments.
+///
+/// # Arguments
+///
+/// * `shell` - The shell type to generate completions for (Bash, Zsh, Fish, `PowerShell`, or Elvish)
+fn handle_completions(shell: Shell) {
+    let mut cmd = Cli::command();
+    let bin_name = cmd.get_name().to_string();
+    generate(shell, &mut cmd, bin_name, &mut std::io::stdout());
 }
 
 #[cfg(test)]

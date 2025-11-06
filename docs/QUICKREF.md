@@ -35,6 +35,7 @@ geoetl-cli --version
 | `convert` | Convert between formats | 🚧 Phase 2 |
 | `info` | Display dataset info | 🚧 Phase 2 |
 | `drivers` | List available drivers | ✅ Ready |
+| `completions` | Generate shell completions | ✅ Ready |
 
 ## Convert
 
@@ -63,6 +64,30 @@ geoetl-cli info --detailed --stats data.shp
 # List all drivers with their capabilities
 geoetl-cli drivers
 ```
+
+## Completions
+
+Generate shell completion scripts for faster command-line usage:
+
+```bash
+# Bash
+geoetl-cli completions bash > ~/.local/share/bash-completion/completions/geoetl
+source ~/.local/share/bash-completion/completions/geoetl
+
+# Zsh (add to ~/.zshrc: fpath=(~/.zsh/completions $fpath))
+geoetl-cli completions zsh > ~/.zsh/completions/_geoetl
+
+# Fish
+geoetl-cli completions fish > ~/.config/fish/completions/geoetl.fish
+
+# PowerShell (add to $PROFILE)
+geoetl-cli completions powershell > geoetl.ps1
+
+# Elvish
+geoetl-cli completions elvish > ~/.elvish/completions/geoetl.elv
+```
+
+**Supported shells**: bash, zsh, fish, powershell, elvish
 
 ## Popular Drivers
 
@@ -130,11 +155,12 @@ geoetl-cli -d convert -i input.geojson -o output.shp
 
 ## Tips
 
-1. **Driver specification**: Currently requires explicit `--input-driver` and `--output-driver` (auto-detection coming in Phase 2)
-2. **Verbose output**: Add `-v` to see progress and detailed information
-3. **Check capabilities**: Use `geoetl-cli drivers` to see what each driver supports
-4. **Command help**: Every command has detailed help with `--help`
-5. **Phase 1 Status**: CLI framework and driver registry are complete; file I/O implementation is Phase 2
+1. **Shell completions**: Install completions for your shell for faster command entry with tab completion
+2. **Driver specification**: Currently requires explicit `--input-driver` and `--output-driver` (auto-detection coming in Phase 2)
+3. **Verbose output**: Add `-v` to see progress and detailed information
+4. **Check capabilities**: Use `geoetl-cli drivers` to see what each driver supports
+5. **Command help**: Every command has detailed help with `--help`
+6. **Phase 1 Status**: CLI framework and driver registry are complete; file I/O implementation is Phase 2
 
 ## Error Troubleshooting
 

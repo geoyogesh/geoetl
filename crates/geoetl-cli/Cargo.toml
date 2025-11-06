@@ -9,6 +9,7 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 clap = { workspace = true, features = ["derive"] }
+clap_complete.workspace = true
 tabled = { workspace = true, features = ["derive"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true

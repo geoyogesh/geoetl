@@ -123,6 +123,36 @@ To update to the latest version:
 2. Extract the new binary
 3. Replace your existing binary
 
+## Shell Completions (Optional)
+
+For faster command-line usage, install shell completions:
+
+**Bash**:
+```bash
+geoetl-cli completions bash > ~/.local/share/bash-completion/completions/geoetl
+source ~/.local/share/bash-completion/completions/geoetl
+```
+
+**Zsh**:
+```bash
+# Add to ~/.zshrc: fpath=(~/.zsh/completions $fpath)
+mkdir -p ~/.zsh/completions
+geoetl-cli completions zsh > ~/.zsh/completions/_geoetl
+```
+
+**Fish**:
+```bash
+geoetl-cli completions fish > ~/.config/fish/completions/geoetl.fish
+```
+
+**PowerShell**:
+```powershell
+geoetl-cli completions powershell > geoetl.ps1
+# Add to your $PROFILE
+```
+
+After installing completions, you can press TAB to autocomplete commands and options!
+
 ## Uninstalling
 
 To remove GeoETL:
