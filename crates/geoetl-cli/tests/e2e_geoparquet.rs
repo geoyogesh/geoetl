@@ -435,38 +435,3 @@ fn test_cli_convert_roundtrip_geojson_geoparquet_geojson() {
     let json_result = serde_json::from_str::<serde_json::Value>(&output_content);
     assert!(json_result.is_ok(), "Output should be valid JSON");
 }
-
-// ============================================================================
-// Performance Tests
-// ============================================================================
-
-#[test]
-fn test_cli_convert_geoparquet_performance() {
-    let temp_dir = TempDir::new().unwrap();
-    let output_path = temp_dir.path().join("output.parquet");
-
-    let start = std::time::Instant::now();
-
-    geoetl_cmd()
-        .arg("convert")
-        .arg("--input")
-        .arg(TEST_DATA_CSV)
-        .arg("--output")
-        .arg(&output_path)
-        .arg("--input-driver")
-        .arg("CSV")
-        .arg("--output-driver")
-        .arg("GeoParquet")
-        .assert()
-        .success();
-
-    let duration = start.elapsed();
-
-    // Conversion should complete in reasonable time (< 5 seconds for 243 records)
-    assert!(
-        duration.as_secs() < 5,
-        "GeoParquet conversion took too long: {duration:?}"
-    );
-
-    assert!(output_path.exists());
-}

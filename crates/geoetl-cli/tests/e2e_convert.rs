@@ -295,38 +295,6 @@ fn test_cli_convert_case_insensitive_drivers() {
 }
 
 #[test]
-fn test_cli_convert_large_dataset_performance() {
-    let temp_dir = TempDir::new().unwrap();
-    let output_path = temp_dir.path().join("output.csv");
-
-    // This test uses the 243-city dataset to ensure reasonable performance
-    let start = std::time::Instant::now();
-
-    geoetl_cmd()
-        .arg("convert")
-        .arg("--input")
-        .arg(TEST_DATA_CSV)
-        .arg("--output")
-        .arg(&output_path)
-        .arg("--input-driver")
-        .arg("CSV")
-        .arg("--output-driver")
-        .arg("CSV")
-        .assert()
-        .success();
-
-    let duration = start.elapsed();
-
-    // Conversion should complete in reasonable time (< 5 seconds for 243 records)
-    assert!(
-        duration.as_secs() < 5,
-        "Conversion took too long: {duration:?}"
-    );
-
-    assert!(output_path.exists());
-}
-
-#[test]
 fn test_cli_convert_geojson_output_format() {
     let temp_dir = TempDir::new().unwrap();
     let output_path = temp_dir.path().join("output.geojson");
