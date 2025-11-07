@@ -64,7 +64,7 @@ tar -xzf geoetl-cli-*.tar.gz  # Linux/macOS
 
 You should see a table of supported format drivers (currently 3: GeoJSON, CSV, GeoParquet). See the complete [Supported Drivers Reference](./reference/supported-drivers) for details!
 
-**Try GeoParquet** (new in v0.3.0):
+**Try GeoParquet**:
 
 ```bash
 # Convert GeoJSON to efficient GeoParquet (6.8x smaller!)
@@ -88,15 +88,16 @@ Get started with these beginner-friendly tutorials:
 
 ## Current Status
 
-GeoETL is in **Phase 1 (Complete)** with v0.3.0 adding GeoParquet support. Here's what works today:
+GeoETL is in **Phase 1 (Complete)**. Here's what works today:
 
 ✅ **Working Now**:
 - CSV format (read/write with WKT geometries)
 - GeoJSON format (full read/write support)
-- **GeoParquet format** (full read/write with WKB geometries) - **New in v0.3.0!**
+- GeoParquet format (full read/write with WKB geometries)
 - Convert command (CSV ↔ GeoJSON ↔ GeoParquet conversions)
 - Info command (dataset schema inspection)
 - Driver registry and capability checking
+- Shell completions (bash, zsh, fish, powershell, elvish)
 - Comprehensive error messages with helpful examples
 
 🚧 **Coming Soon** (Q1-Q2 2026):

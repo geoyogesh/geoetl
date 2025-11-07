@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use datafusion::datasource::physical_plan::FileSinkConfig;
 use datafusion::datasource::sink::DataSink;
 use datafusion::physical_plan::metrics::MetricsSet;
+use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::physical_plan::{DisplayAs, DisplayFormatType};
 use datafusion_common::{DataFusionError, Result};
 use datafusion_execution::{SendableRecordBatchStream, TaskContext};
@@ -60,9 +61,11 @@ impl DataSink for GeoParquetSink {
 
     async fn write_all(
         &self,
-        mut data: SendableRecordBatchStream,
+        data: SendableRecordBatchStream,
         _context: &Arc<TaskContext>,
     ) -> Result<u64> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+
         use datafusion::logical_expr::dml::InsertOp;
 
         // Get output path from original URL (the file path user specified)
@@ -74,36 +77,55 @@ impl DataSink for GeoParquetSink {
             url_str
         };
 
-        // For GeoParquet, we only support Overwrite mode
+        // For GeoParquet, we support Overwrite and Replace modes
+        // Both modes overwrite the entire file since Parquet files are immutable
         // Append doesn't make sense for Parquet files
         match self.config.insert_op {
-            InsertOp::Overwrite => {},
-            InsertOp::Append | InsertOp::Replace => {
-                return Err(DataFusionError::NotImplemented(format!(
-                    "Insert operation {:?} is not supported for GeoParquet. Only Overwrite is supported.",
-                    self.config.insert_op
-                )));
+            InsertOp::Overwrite | InsertOp::Replace => {
+                // Both modes result in overwriting the file
+            },
+            InsertOp::Append => {
+                return Err(DataFusionError::NotImplemented(
+                    "Insert operation Append is not supported for GeoParquet. \
+                     Parquet files are immutable and cannot be appended to. \
+                     Use Overwrite or Replace instead."
+                        .to_string(),
+                ));
             },
         }
 
-        // Collect all batches
-        let mut batches = Vec::new();
-        let mut row_count = 0u64;
-
-        while let Some(batch_result) = data.next().await {
-            let batch = batch_result?;
-            row_count += batch.num_rows() as u64;
-            batches.push(batch);
-        }
-
-        // Write all batches to file
+        // Create file for writing
         let file =
             std::fs::File::create(file_path).map_err(|e| DataFusionError::External(Box::new(e)))?;
 
         let mut writer = file;
-        crate::writer::write_geoparquet(&mut writer, &batches, &self.writer_options)?;
 
-        Ok(row_count)
+        // Use streaming writer to process batches without buffering all in memory
+        // We need to count rows, so we'll wrap the stream to track row count
+        let row_count = Arc::new(AtomicU64::new(0));
+        let row_count_clone = row_count.clone();
+
+        // Get schema before wrapping the stream
+        let schema = self.config.output_schema().clone();
+
+        // Create a stream that counts rows as batches pass through
+        let counting_stream = data.inspect(move |result| {
+            if let Ok(batch) = result {
+                row_count_clone.fetch_add(batch.num_rows() as u64, Ordering::SeqCst);
+            }
+        });
+
+        // Wrap in RecordBatchStreamAdapter to make it a proper RecordBatchStream
+        let adapted_stream = RecordBatchStreamAdapter::new(schema, counting_stream);
+
+        crate::writer::write_geoparquet_stream(
+            &mut writer,
+            Box::pin(adapted_stream),
+            &self.writer_options,
+        )
+        .await?;
+
+        Ok(row_count.load(Ordering::SeqCst))
     }
 }
 
@@ -117,5 +139,45 @@ impl DisplayAs for GeoParquetSink {
                 write!(f, "GeoParquetSink")
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_writer_options_default() {
+        let options = GeoParquetWriterOptions::default();
+        assert_eq!(options.geometry_column_name, "geometry");
+    }
+
+    #[test]
+    fn test_writer_options_with_geometry_column() {
+        let options = GeoParquetWriterOptions::default().with_geometry_column("wkt");
+        assert_eq!(options.geometry_column_name, "wkt");
+    }
+
+    #[test]
+    fn test_writer_options_with_row_group_size() {
+        let options = GeoParquetWriterOptions::default().with_row_group_size(1024);
+        assert_eq!(options.row_group_size, 1024);
+    }
+
+    #[test]
+    fn test_writer_options_builder_pattern() {
+        use parquet::basic::ZstdLevel;
+
+        let options = GeoParquetWriterOptions::new()
+            .with_geometry_column("location")
+            .with_row_group_size(4096)
+            .with_compression(parquet::basic::Compression::ZSTD(ZstdLevel::default()));
+
+        assert_eq!(options.geometry_column_name, "location");
+        assert_eq!(options.row_group_size, 4096);
+        assert!(matches!(
+            options.compression,
+            parquet::basic::Compression::ZSTD(_)
+        ));
     }
 }

@@ -49,7 +49,9 @@ pub use factory::register_geoparquet_format;
 pub use file_format::GeoParquetFormatOptions;
 pub use file_source::GeoParquetSourceBuilder;
 pub use sink::GeoParquetSink;
-pub use writer::{GeoParquetWriterOptions, write_geoparquet, write_geoparquet_to_bytes};
+pub use writer::{
+    GeoParquetWriterOptions, write_geoparquet, write_geoparquet_stream, write_geoparquet_to_bytes,
+};
 
 use datafusion::prelude::*;
 use datafusion_common::Result;
@@ -175,10 +177,41 @@ impl SessionContextGeoParquetExt for SessionContext {
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn test_register_geoparquet_file() -> Result<()> {
-        // This is a placeholder test - actual GeoParquet file creation
-        // requires the writer implementation
-        Ok(())
+    #[test]
+    fn test_geoparquet_format_options_default() {
+        let options = GeoParquetFormatOptions::default();
+        // Just test that default construction works
+        assert!(options.batch_size > 0);
+    }
+
+    #[test]
+    fn test_geoparquet_format_options_builder() {
+        let options = GeoParquetFormatOptions::new()
+            .with_batch_size(1024)
+            .with_geometry_column_name("wkt");
+
+        assert_eq!(options.batch_size, 1024);
+    }
+
+    #[test]
+    fn test_writer_options_default() {
+        let options = GeoParquetWriterOptions::default();
+        assert_eq!(options.geometry_column_name, "geometry");
+    }
+
+    #[test]
+    fn test_writer_options_with_geometry_column() {
+        let options = GeoParquetWriterOptions::default().with_geometry_column("my_geom");
+        assert_eq!(options.geometry_column_name, "my_geom");
+    }
+
+    #[test]
+    fn test_writer_options_builder_pattern() {
+        let options = GeoParquetWriterOptions::new()
+            .with_geometry_column("location")
+            .with_row_group_size(4096);
+
+        assert_eq!(options.geometry_column_name, "location");
+        assert_eq!(options.row_group_size, 4096);
     }
 }

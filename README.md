@@ -113,6 +113,9 @@ geoetl-cli convert \
 geoetl-cli info data.geojson
 geoetl-cli info --detailed --stats data.geojson
 
+# Generate shell completions
+geoetl-cli completions bash > ~/.local/share/bash-completion/completions/geoetl
+
 # Enable verbose logging
 geoetl-cli -v convert -i input.geojson -o output.parquet
 ```
@@ -149,7 +152,26 @@ geoetl-cli info data.geojson
 geoetl-cli info --detailed --stats data.geojson
 ```
 
+### Shell Completions
 
+GeoETL supports shell completions for faster command-line usage:
+
+```bash
+# Bash
+geoetl-cli completions bash > ~/.local/share/bash-completion/completions/geoetl
+
+# Zsh
+geoetl-cli completions zsh > ~/.zsh/completions/_geoetl
+
+# Fish
+geoetl-cli completions fish > ~/.config/fish/completions/geoetl.fish
+
+# PowerShell
+geoetl-cli completions powershell > geoetl.ps1
+
+# Elvish
+geoetl-cli completions elvish > ~/.elvish/completions/geoetl.elv
+```
 
 ## Documentation
 

@@ -268,6 +268,14 @@ bench/run_benchmark.sh "./target/release/geoetl-cli convert \
   --output-driver GeoParquet" \
   "geoparquet_to_geoparquet_1m"
 
+# GeoParquet → GeoParquet (Full)
+bench/run_benchmark.sh "./target/release/geoetl-cli convert \
+  --input bench/data/final/geoparquet/buildings_point_full.parquet \
+  --output bench/output/geoparquet_to_geoparquet_full.parquet \
+  --input-driver GeoParquet \
+  --output-driver GeoParquet" \
+  "geoparquet_to_geoparquet_full"
+
 # GeoJSON → GeoParquet (1M)
 bench/run_benchmark.sh "./target/release/geoetl-cli convert \
   --input bench/data/final/geojson/buildings_point_1m.geojson \
@@ -275,6 +283,7 @@ bench/run_benchmark.sh "./target/release/geoetl-cli convert \
   --input-driver GeoJSON \
   --output-driver GeoParquet" \
   "geojson_to_geoparquet_1m"
+
 
 # CSV → GeoParquet (1M)
 bench/run_benchmark.sh "./target/release/geoetl-cli convert \

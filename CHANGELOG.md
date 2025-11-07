@@ -97,6 +97,45 @@ None
 
 ---
 
+## [0.3.1] - 2025-11-06
+
+### Added
+
+- **Shell Completions Support** ([#218975b](https://github.com/geoyogesh/geoetl/commit/218975b))
+  - Added `completions` subcommand to generate shell completion scripts
+  - Support for 5 shells: bash, zsh, fish, powershell, and elvish
+  - Enables tab completion for commands, subcommands, and options
+  - Updated documentation with installation instructions and examples
+
+- **New Geospatial Format Scaffolding** ([#c0f4932](https://github.com/geoyogesh/geoetl/commit/c0f4932))
+  - Arrow IPC format module for zero-copy data exchange
+  - GeoPackage format module for SQLite-based vector data
+  - OpenStreetMap (OSM) format module for OSM PBF/XML data
+  - Shapefile format module for ESRI Shapefile support
+
+- **GeoParquet Streaming I/O Enhancements** ([#9631d93](https://github.com/geoyogesh/geoetl/commit/9631d93))
+  - Implemented statistics inference for improved performance
+  - Enhanced streaming I/O capabilities
+  - Reduced memory usage for large file processing
+
+### Changed
+
+- **Documentation Updates**
+  - Refactored GeoParquet ADR to follow Michael Nygard template ([#40a0a7c](https://github.com/geoyogesh/geoetl/commit/40a0a7c))
+  - Added shell completions documentation to README.md, QUICKREF.md, and doc site
+  - Removed version-specific annotations from documentation
+
+### Dependencies
+
+- Upgraded `geoarrow` from 0.5.0 to 0.6.2
+- Added `clap_complete` 4.5.50 for shell completion generation
+
+### Removed
+
+- Removed performance tests from GeoParquet module in end to end tests
+
+---
+
 ## [0.2.0] - 2025-11-03
 
 ### Added
