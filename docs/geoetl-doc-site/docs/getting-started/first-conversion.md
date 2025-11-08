@@ -27,7 +27,7 @@ By the end of this tutorial, you'll know how to:
 Download the Natural Earth cities dataset:
 
 ```bash
-curl -O https://pub-f49e62c2a4114dc1bbbb62a1167ab950.r2.dev/readers/geojson/natural-earth_natural-earth_cities.geojson
+curl -O https://pub-f49e62c2a4114dc1bbbb62a1167ab950.r2.dev/readers/geojson/natural-earth_cities.geojson
 ```
 
 This GeoJSON file contains 243 major world cities with population and geographic data.
@@ -40,7 +40,7 @@ Now let's convert this GeoJSON file to CSV format.
 
 ```bash
 geoetl-cli convert \
-  --input natural-earth_natural-earth_cities.geojson \
+  --input natural-earth_cities.geojson \
   --output cities.csv \
   --input-driver GeoJSON \
   --output-driver CSV
@@ -246,12 +246,12 @@ Great work! You've completed your first conversion. 🎉
 
 Continue learning:
 
-👉 **Next: [Understanding Drivers](./understanding-drivers)** - Learn about supported formats
+👉 **Next: [Understanding Drivers](../tutorial-basics/understanding-drivers)** - Learn about supported formats
 
 Or explore:
-- [Working with GeoJSON](./working-with-geojson) - Web-standard format
-- [Working with CSV](./working-with-csv) - Advanced CSV operations
-- [Working with GeoParquet](./working-with-geoparquet) - Modern columnar format
+- [Working with GeoJSON](../tutorial-basics/working-with-geojson) - Web-standard format
+- [Working with CSV](../tutorial-basics/working-with-csv) - Advanced CSV operations
+- [Working with GeoParquet](../tutorial-basics/working-with-geoparquet) - Modern columnar format
 
 ## Quick Reference
 

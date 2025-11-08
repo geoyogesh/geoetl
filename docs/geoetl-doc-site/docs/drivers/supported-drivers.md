@@ -8,7 +8,7 @@ Complete reference of all GeoETL format drivers, their capabilities, and planned
 
 ## Quick Summary
 
-**Currently Supported**: 3 drivers (GeoJSON, CSV, GeoParquet)
+**Currently Supported**: GeoJSON, CSV, GeoParquet
 **Planned**: 65+ additional drivers via GDAL integration
 
 ## Currently Supported Drivers
@@ -17,16 +17,10 @@ These drivers are fully implemented and production-ready:
 
 ### GeoJSON
 
-**Status**: ✅ Fully Supported (v0.1.0+)
+**Status**: ✅ Fully Supported
 **Capabilities**: Info ✓ | Read ✓ | Write ✓
 
 **Format**: JSON-based geographic data structure (RFC 7946)
-
-**Use cases**:
-- Web mapping applications
-- JavaScript/TypeScript projects
-- API responses and data exchange
-- Small to medium datasets (&lt;100k features)
 
 **Example**:
 ```bash
@@ -40,16 +34,10 @@ geoetl-cli convert -i data.geojson -o data.csv \
 
 ### CSV (Comma Separated Value)
 
-**Status**: ✅ Fully Supported (v0.1.0+)
+**Status**: ✅ Fully Supported
 **Capabilities**: Info ✓ | Read ✓ | Write ✓
 
 **Format**: CSV with WKT (Well-Known Text) geometries
-
-**Use cases**:
-- Excel compatibility
-- Simple tabular data with geometries
-- Data analysis and visualization
-- Legacy system integration
 
 **Example**:
 ```bash
@@ -64,23 +52,16 @@ geoetl-cli convert -i data.csv -o data.geojson \
 
 ### GeoParquet
 
-**Status**: ✅ Fully Supported (v0.3.0+)
+**Status**: ✅ Fully Supported
 **Capabilities**: Info ✓ | Read ✓ | Write ✓
 
 **Format**: Apache Parquet with WKB-encoded geometries and GeoArrow types
 
 **Performance**:
-- 🏆 **Best compression**: 6.8x smaller than GeoJSON
-- ⚡ **Best throughput**: 3,315 MB/min (11x faster than GeoJSON)
-- 💾 **Memory efficient**: &lt;250 MB peak memory
-- 🚀 **Production-ready**: Handles 100M+ features
-
-**Use cases**:
-- Large-scale datasets (1M+ features)
-- Cloud storage optimization
-- Analytics pipelines (DuckDB, Spark)
-- Data archival
-- High-performance processing
+- Efficient compression
+- Fast throughput
+- Memory efficient: Low peak memory usage
+- Production-ready: Handles 100M+ features
 
 **Example**:
 ```bash
@@ -96,38 +77,20 @@ geoetl-cli convert -i data.geojson -o data.parquet \
 
 These drivers are planned for future releases:
 
-### High Priority (Q1-Q2 2026)
+### High Priority
 
 #### FlatGeobuf (FGB)
-**Status**: 🚧 Planned (v0.4.0)
-
-**Use cases**:
-- Cloud-optimized streaming
-- HTTP range requests
-- Spatial indexing
-- Large dataset handling
+**Status**: 🚧 Planned
 
 ---
 
 #### GeoPackage (GPKG)
-**Status**: 🚧 Planned (Q1 2026)
-
-**Use cases**:
-- SQLite-based geospatial database
-- OGC standard format
-- Mobile and offline applications
-- Multiple layers per file
+**Status**: 🚧 Planned
 
 ---
 
 #### ESRI Shapefile
-**Status**: 🚧 Planned (Q1 2026)
-
-**Use cases**:
-- Industry standard format
-- GIS software compatibility
-- Legacy data conversion
-- Wide tool support
+**Status**: 🚧 Planned
 
 ---
 
@@ -166,64 +129,6 @@ These drivers are planned for future releases:
 - TileDB
 
 See the full roadmap: [VISION.md](https://github.com/geoyogesh/geoetl/blob/main/docs/VISION.md)
-
----
-
-## Format Comparison
-
-### File Size (1M features, Microsoft Buildings dataset)
-
-| Format | File Size | Compression vs GeoJSON |
-|--------|-----------|----------------------|
-| GeoJSON | 114.13 MB | Baseline |
-| CSV | 32.11 MB | 3.5x smaller |
-| **GeoParquet** | **16.86 MB** | **6.8x smaller** 🏆 |
-
-### Processing Speed (1M features)
-
-| Conversion | Throughput | Duration | Performance |
-|------------|-----------|----------|-------------|
-| GeoJSON → GeoJSON | 300 MB/min | 23s | Baseline |
-| CSV → CSV | 3,211 MB/min | 1s | 10.7x faster |
-| **GeoParquet → GeoParquet** | **3,315 MB/min** | **1s** | **11x faster** 🏆 |
-| GeoJSON → GeoParquet | 3,804 MB/min | 2s | 12.7x faster |
-
-### Memory Usage
-
-All conversions use **&lt;250 MB** peak memory regardless of dataset size, confirming GeoETL's streaming architecture.
-
----
-
-## Choosing the Right Driver
-
-### Decision Tree
-
-**For web applications** → **GeoJSON**
-- JavaScript-friendly
-- Human-readable
-- Wide browser support
-
-**For data analysis** → **GeoParquet** (best) or **CSV** (simple)
-- Columnar format for fast queries
-- Efficient compression
-- Modern analytics tools
-
-**For large datasets (1M+ features)** → **GeoParquet** 🏆
-- 6.8x smaller than GeoJSON
-- 3,315 MB/min throughput
-- Minimal memory usage
-- Production-ready at scale
-
-**For GIS software** → **Shapefile** or **GeoPackage** (coming soon)
-- Industry standard
-- Universal support
-- Metadata preservation
-
-**For cloud/big data** → **GeoParquet** 🏆
-- Columnar storage
-- Best compression
-- Cloud-optimized
-- Modern data stacks
 
 ---
 
@@ -279,7 +184,7 @@ Output shows:
 ### GeoJSON ↔ GeoParquet (Recommended)
 
 ```bash
-# GeoJSON to GeoParquet (6.8x compression!)
+# GeoJSON to GeoParquet (excellent compression!)
 geoetl-cli convert -i data.geojson -o data.parquet \
   --input-driver GeoJSON --output-driver GeoParquet
 
@@ -304,7 +209,7 @@ geoetl-cli convert -i data.geojson -o data.csv \
 ### CSV ↔ GeoParquet
 
 ```bash
-# CSV to GeoParquet (1.9x compression)
+# CSV to GeoParquet (good compression)
 geoetl-cli convert -i data.csv -o data.parquet \
   --input-driver CSV --output-driver GeoParquet \
   --geometry-column wkt
@@ -324,17 +229,6 @@ Different drivers handle geometries differently:
 | GeoJSON | Native JSON | `{"type": "Point", "coordinates": [x, y]}` |
 | CSV | WKT (Well-Known Text) | `"POINT(x y)"` |
 | GeoParquet | WKB (Well-Known Binary) | Binary columnar format |
-
-### WKT Examples
-
-```
-POINT(x y)
-LINESTRING(x1 y1, x2 y2, x3 y3)
-POLYGON((x1 y1, x2 y2, x3 y3, x1 y1))
-MULTIPOINT((x1 y1), (x2 y2))
-MULTILINESTRING((...), (...))
-MULTIPOLYGON((...), (...))
-```
 
 ---
 
@@ -376,7 +270,3 @@ geoetl-cli drivers --help
 
 **Roadmap**:
 - [VISION.md](https://github.com/geoyogesh/geoetl/blob/main/docs/VISION.md) - Complete roadmap and planned features
-
----
-
-**Last Updated**: v0.3.0 (2025-11-04)

@@ -109,7 +109,7 @@ Technical details: [Architecture ADR 004](https://github.com/geoyogesh/geoetl/bl
 
 ## Documentation
 
-- [Supported Drivers Reference](../docs/reference/supported-drivers) - Complete driver documentation
+- [Supported Drivers Reference](../docs/drivers/supported-drivers) - Complete driver documentation
 - [Working with GeoParquet Tutorial](../docs/tutorial-basics/working-with-geoparquet)
 - [Benchmark Results](https://github.com/geoyogesh/geoetl/blob/main/bench/README.md#geoparquet-performance)
 - [GeoParquet Specification](https://geoparquet.org/)

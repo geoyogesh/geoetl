@@ -1,0 +1,9 @@
+{
+  "label": "How-To Guides",
+  "position": 7,
+  "link": {
+    "type": "generated-index",
+    "description": "Task-oriented guides for accomplishing specific goals with GeoETL."
+  },
+  "collapsed": true
+}
