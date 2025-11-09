@@ -1,5 +1,8 @@
 version: 2.1
 
+orbs:
+  codecov: codecov/codecov@5.4.3
+
 # Define reusable executors
 executors:
   rust-executor:
@@ -54,72 +57,10 @@ jobs:
             - $CARGO_HOME/registry
             - $CARGO_HOME/git
 
-  # Build
-  build:
-    executor: rust-executor
-    environment:
-      SCCACHE_DIR: "/tmp/sccache"
-    steps:
-      - checkout
-      - restore_cache:
-          keys:
-            - sccache-v1-{{ checksum "Cargo.lock" }}
-            - sccache-v1-
-      - run:
-          name: Install sccache
-          command: |
-            cargo install sccache
-            echo 'export RUSTC_WRAPPER=$(which sccache)' >> $BASH_ENV
-            source $BASH_ENV
-      - run:
-          name: Build workspace
-          command: cargo build --workspace --all-targets --release
-      - save_cache:
-          key: sccache-v1-{{ checksum "Cargo.lock" }}
-          paths:
-            - $CARGO_HOME/registry
-            - $CARGO_HOME/git
-            - /tmp/sccache
-      - persist_to_workspace:
-          root: .
-          paths:
-            - target/release/*
-
-  # Run tests
-  test:
-    executor: rust-executor
-    environment:
-      SCCACHE_DIR: "/tmp/sccache"
-    steps:
-      - checkout
-      - restore_cache:
-          keys:
-            - sccache-v1-{{ checksum "Cargo.lock" }}
-            - sccache-v1-
-      - run:
-          name: Install sccache
-          command: |
-            cargo install sccache
-            echo 'export RUSTC_WRAPPER=$(which sccache)' >> $BASH_ENV
-            source $BASH_ENV
-      - run:
-          name: Run tests
-          command: cargo test --workspace --all-targets
-      - run:
-          name: Create test results directory
-          command: mkdir -p test-results
-          when: always
-      - store_test_results:
-          path: test-results
-      - save_cache:
-          key: sccache-v1-{{ checksum "Cargo.lock" }}
-          paths:
-            - $CARGO_HOME/registry
-            - $CARGO_HOME/git
-            - /tmp/sccache
-
-  # Code coverage
-  coverage:
+  # Build, test, and generate coverage in one job
+  # This is more efficient than separate jobs because cargo llvm-cov
+  # needs to recompile with instrumentation anyway
+  build-test-coverage:
     executor: rust-executor
     environment:
       SCCACHE_DIR: "/tmp/sccache"
@@ -142,6 +83,15 @@ jobs:
       - run:
           name: Display coverage summary
           command: cargo llvm-cov --workspace --all-targets --summary-only
+      - run:
+          name: Create test results directory
+          command: mkdir -p test-results
+          when: always
+      - store_test_results:
+          path: test-results
+      - codecov/upload:
+          files: lcov.info
+          flags: unittests
       - store_artifacts:
           path: lcov.info
           destination: coverage/lcov.info
@@ -196,10 +146,4 @@ workflows:
       - format
       - lint
       - security
-      - build
-      - test:
-          requires:
-            - build
-      - coverage:
-          requires:
-            - test
+      - build-test-coverage
