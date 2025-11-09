@@ -1,0 +1,9 @@
+{
+  "label": "Drivers",
+  "position": 4,
+  "link": {
+    "type": "generated-index",
+    "description": "Format driver documentation for all supported geospatial data formats."
+  },
+  "collapsed": true
+}

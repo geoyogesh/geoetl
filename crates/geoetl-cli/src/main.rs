@@ -94,6 +94,18 @@ enum Commands {
         #[arg(long, value_name = "TYPE")]
         geometry_type: Option<String>,
 
+        /// Optional SQL query to apply to the input dataset.
+        /// The table name is inferred from the input filename (e.g., cities.csv → table "cities").
+        /// Example: "SELECT name, geometry FROM cities WHERE population > 100000"
+        #[arg(long, value_name = "QUERY")]
+        sql: Option<String>,
+
+        /// Optional table name to use in SQL queries (overrides the inferred name from filename).
+        /// By default, the table name is inferred from the input filename.
+        /// Example: --table-name `my_data`
+        #[arg(long, value_name = "NAME")]
+        table_name: Option<String>,
+
         /// Number of rows per batch for processing (default: 8192).
         /// Larger values use more memory but may improve throughput.
         /// Recommended: 8192 for balanced performance, 65536 for high-memory systems.
@@ -229,6 +241,8 @@ async fn main() {
             output_driver,
             geometry_column,
             geometry_type,
+            sql,
+            table_name,
             batch_size,
             read_partitions,
             write_partitions,
@@ -241,6 +255,8 @@ async fn main() {
                 &output_driver,
                 &geometry_column,
                 geometry_type.as_deref(),
+                sql.as_deref(),
+                table_name.as_deref(),
                 batch_size,
                 read_partitions,
                 write_partitions,
@@ -296,6 +312,8 @@ async fn handle_convert(
     output_driver_name: &str,
     geometry_column: &str,
     geometry_type: Option<&str>,
+    sql_query: Option<&str>,
+    table_name: Option<&str>,
     batch_size: Option<usize>,
     read_partitions: Option<usize>,
     write_partitions: Option<usize>,
@@ -308,6 +326,12 @@ async fn handle_convert(
     info!("Geometry column: {geometry_column}");
     if let Some(geom_type) = geometry_type {
         info!("Geometry type: {geom_type}");
+    }
+    if let Some(sql) = sql_query {
+        info!("SQL query: {sql}");
+    }
+    if let Some(name) = table_name {
+        info!("Table name override: {name}");
     }
 
     let input_driver = drivers::find_driver(input_driver_name)
@@ -340,6 +364,8 @@ async fn handle_convert(
         &output_driver,
         geometry_column,
         geometry_type,
+        sql_query,
+        table_name,
         batch_size,
         read_partitions,
         write_partitions,
@@ -515,6 +541,8 @@ mod tests {
             output_driver_name,
             "geometry",
             None,
+            None, // sql_query
+            None, // table_name
             None, // batch_size
             None, // read_partitions
             None, // write_partitions
@@ -545,6 +573,8 @@ mod tests {
             output_driver_name,
             "geometry",
             None,
+            None, // sql_query
+            None, // table_name
             None, // batch_size
             None, // read_partitions
             None, // write_partitions
@@ -573,6 +603,8 @@ mod tests {
             output_driver_name,
             "geometry",
             None,
+            None, // sql_query
+            None, // table_name
             None, // batch_size
             None, // read_partitions
             None, // write_partitions
@@ -603,6 +635,8 @@ mod tests {
             output_driver_name,
             "geometry",
             None,
+            None, // sql_query
+            None, // table_name
             None, // batch_size
             None, // read_partitions
             None, // write_partitions

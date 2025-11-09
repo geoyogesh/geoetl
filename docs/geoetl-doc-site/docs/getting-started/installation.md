@@ -172,9 +172,9 @@ Congratulations! GeoETL is now installed. 🎉
 
 Or explore:
 - [Supported Drivers Reference](../drivers/supported-drivers) - Complete driver documentation
-- [Understanding Drivers](./understanding-drivers) - Learn about format support
-- [Working with CSV](./working-with-csv) - CSV-specific operations
-- [Working with GeoParquet](./working-with-geoparquet) - Modern columnar format
+- [Understanding Drivers](../tutorial-basics/understanding-drivers) - Learn about format support
+- [Working with CSV](../tutorial-basics/working-with-csv) - CSV-specific operations
+- [Working with GeoParquet](../tutorial-basics/working-with-geoparquet) - Modern columnar format
 
 ## Getting Help
 

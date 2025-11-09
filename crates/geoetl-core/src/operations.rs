@@ -13,11 +13,29 @@ use log::{info, warn};
 // Type alias for backward compatibility during migration
 type Result<T> = std::result::Result<T, GeoEtlError>;
 
+/// Infer table name from input file path.
+///
+/// Extracts the filename (without extension) to use as the table name in SQL queries.
+/// Falls back to "dataset" if the filename cannot be determined.
+///
+/// # Examples
+///
+/// * `/path/to/cities.geojson` -> `cities`
+/// * `buildings.csv` -> `buildings`
+/// * `/tmp/data` -> `data`
+/// * Invalid path -> `dataset`
+fn infer_table_name(input_path: &str) -> String {
+    std::path::Path::new(input_path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .map_or_else(|| "dataset".to_string(), std::string::ToString::to_string)
+}
+
 /// Initialize a `DataFusion` session context and register a dataset.
 ///
 /// This is a common entry point for all ETL operations that need to work with a dataset.
 /// It creates a new session context, registers the dataset with the specified parameters,
-/// and returns the context ready for use.
+/// and returns the context ready for use along with the table name used for registration.
 ///
 /// # Arguments
 ///
@@ -26,10 +44,11 @@ type Result<T> = std::result::Result<T, GeoEtlError>;
 /// * `geometry_column` - Name of the geometry column (for CSV)
 /// * `geometry_type` - Optional geometry type hint (for CSV)
 /// * `batch_size` - Number of rows per batch for processing
+/// * `table_name_override` - Optional custom table name (if not provided, inferred from filename)
 ///
 /// # Returns
 ///
-/// A `SessionContext` with the dataset registered as "dataset" table.
+/// A tuple of (`SessionContext`, `table_name`) where the table name is either custom or inferred.
 ///
 /// # Errors
 ///
@@ -43,7 +62,8 @@ async fn initialize_context(
     geometry_type: Option<&str>,
     batch_size: usize,
     read_partitions: usize,
-) -> Result<SessionContext> {
+    table_name_override: Option<&str>,
+) -> Result<(SessionContext, String)> {
     use datafusion::prelude::SessionConfig;
 
     // Optimize for throughput with configurable parallel processing
@@ -52,18 +72,28 @@ async fn initialize_context(
         .with_batch_size(batch_size);
 
     let ctx = SessionContext::new_with_config(config);
-    let table_name = "dataset";
+
+    // Use custom table name if provided, otherwise infer from filename
+    let table_name = if let Some(custom_name) = table_name_override {
+        info!("Using custom table name '{custom_name}'");
+        custom_name.to_string()
+    } else {
+        let inferred = infer_table_name(input);
+        info!("Registering input as table '{inferred}'");
+        inferred
+    };
+
     register_catalog(
         &ctx,
         input,
         driver,
-        table_name,
+        &table_name,
         geometry_column,
         geometry_type,
         batch_size,
     )
     .await?;
-    Ok(ctx)
+    Ok((ctx, table_name))
 }
 
 /// Prepare format-specific options for reading.
@@ -238,6 +268,8 @@ fn parse_geometry_type(geom_type_str: &str) -> Result<geoarrow_schema::GeoArrowT
 /// * `output_driver` - The driver responsible for writing the output format.
 /// * `geometry_column` - Name of the geometry column (for CSV)
 /// * `geometry_type` - Optional geometry type hint (for CSV)
+/// * `sql_query` - Optional SQL query to apply to the input dataset
+/// * `table_name` - Optional table name override (if not provided, inferred from filename)
 /// * `batch_size` - Number of rows per batch for processing (default: 8192)
 /// * `read_partitions` - Number of partitions for reading (default: 1)
 /// * `write_partitions` - Number of partitions for writing (default: 1, overridden by format)
@@ -252,6 +284,7 @@ fn parse_geometry_type(geom_type_str: &str) -> Result<geoarrow_schema::GeoArrowT
 /// - The file cannot be read or parsed.
 /// - The file format is not yet implemented.
 /// - The output file cannot be written.
+/// - The SQL query is invalid or fails to execute.
 ///
 /// # Note
 ///
@@ -264,6 +297,8 @@ pub async fn convert(
     output_driver: &Driver,
     geometry_column: &str,
     geometry_type: Option<&str>,
+    sql_query: Option<&str>,
+    table_name_override: Option<&str>,
     batch_size: Option<usize>,
     read_partitions: Option<usize>,
     write_partitions: Option<usize>,
@@ -293,21 +328,28 @@ pub async fn convert(
     info!("Write partitions: {write_partitions}");
 
     // Initialize context and register dataset
-    let ctx = initialize_context(
+    let (ctx, table_name) = initialize_context(
         input,
         input_driver,
         geometry_column,
         geometry_type,
         batch_size,
         read_partitions,
+        table_name_override,
     )
     .await?;
 
-    // Get the table
-    let table = ctx
-        .table("dataset")
-        .await
-        .map_err(|e| GeoEtlError::from(anyhow::anyhow!("Failed to get table: {e}")))?;
+    // Get the table - either from SQL query or default SELECT *
+    let table = if let Some(query) = sql_query {
+        info!("Executing SQL query: {query}");
+        ctx.sql(query)
+            .await
+            .map_err(|e| GeoEtlError::from(anyhow::anyhow!("SQL query execution failed: {e}")))?
+    } else {
+        ctx.table(&table_name)
+            .await
+            .map_err(|e| GeoEtlError::from(anyhow::anyhow!("Failed to get table: {e}")))?
+    };
 
     // Use streaming execution via DataSink - NO fallback!
     let registry = geoetl_core_common::driver_registry();
@@ -436,19 +478,21 @@ pub async fn info(
     info!("Read partitions: {read_partitions}");
 
     // Initialize context and register dataset
-    let ctx = initialize_context(
+    // Note: info command doesn't use custom table names, always infers from filename
+    let (ctx, table_name) = initialize_context(
         input,
         input_driver,
         geometry_column,
         geometry_type,
         batch_size,
         read_partitions,
+        None, // No table name override for info command
     )
     .await?;
 
     // Build dataset info using context
     let dataset_info =
-        build_dataset_info_from_context(&ctx, "dataset", input, input_driver).await?;
+        build_dataset_info_from_context(&ctx, &table_name, input, input_driver).await?;
 
     Ok(dataset_info)
 }
@@ -604,6 +648,8 @@ mod tests {
             &output_driver,
             "wkt",
             None,
+            None, // sql_query
+            None, // table_name_override
             None, // batch_size
             None, // read_partitions
             None, // write_partitions
@@ -657,6 +703,8 @@ mod tests {
             &output_driver,
             "geometry",
             None,
+            None, // sql_query
+            None, // table_name_override
             None, // batch_size
             None, // read_partitions
             None, // write_partitions
@@ -702,6 +750,8 @@ mod tests {
             &output_driver,
             "geometry",
             None,
+            None, // sql_query
+            None, // table_name_override
             None, // batch_size
             None, // read_partitions
             None, // write_partitions
@@ -744,6 +794,8 @@ mod tests {
             &output_driver,
             "geometry",
             None,
+            None, // sql_query
+            None, // table_name_override
             None, // batch_size
             None, // read_partitions
             None, // write_partitions
@@ -810,6 +862,8 @@ mod tests {
             &output_driver,
             "geometry",
             None,
+            None, // sql_query
+            None, // table_name_override
             None, // batch_size
             None, // read_partitions
             None, // write_partitions
@@ -855,6 +909,8 @@ mod tests {
             &output_driver,
             "geometry",
             None,
+            None, // sql_query
+            None, // table_name_override
             None, // batch_size
             None, // read_partitions
             None, // write_partitions
@@ -906,6 +962,8 @@ mod tests {
             &output_driver,
             "wkt",
             None,
+            None, // sql_query
+            None, // table_name_override
             None, // batch_size
             None, // read_partitions
             None, // write_partitions

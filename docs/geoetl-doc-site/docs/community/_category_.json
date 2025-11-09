@@ -1,0 +1,9 @@
+{
+  "label": "Community",
+  "position": 9,
+  "link": {
+    "type": "generated-index",
+    "description": "Get help, contribute, and stay updated with the GeoETL project."
+  },
+  "collapsed": true
+}
