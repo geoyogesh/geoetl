@@ -7,7 +7,7 @@ import type * as Preset from '@docusaurus/preset-classic';
 const config: Config = {
   title: 'GeoETL',
   tagline: 'High-Performance Geospatial Data Conversion',
-  favicon: 'img/favicon.ico',
+  favicon: 'img/geoetl_logo2.png',
 
   // Future flags, see https://docusaurus.io/docs/api/docusaurus-config#future
   future: {

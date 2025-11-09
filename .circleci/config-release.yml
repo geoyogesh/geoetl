@@ -25,18 +25,22 @@ executors:
 jobs:
   build-linux-x86_64-gnu:
     executor: rust-executor
+    resource_class: large
     environment:
       SCCACHE_DIR: "/tmp/sccache"
+      CARGO_BUILD_JOBS: "4"
     steps:
       - checkout
       - restore_cache:
           keys:
-            - sccache-v1-{{ checksum "Cargo.lock" }}
-            - sccache-v1-
+            - cargo-cache-v2-{{ checksum "Cargo.lock" }}
+            - cargo-cache-v2-
       - run:
           name: Install sccache
           command: |
-            cargo install sccache
+            if ! command -v sccache &> /dev/null; then
+              cargo install sccache --no-default-features
+            fi
             echo 'export RUSTC_WRAPPER=$(which sccache)' >> $BASH_ENV
             source $BASH_ENV
       - run:
@@ -45,11 +49,14 @@ jobs:
       - run:
           name: Build for x86_64-unknown-linux-gnu
           command: cargo build --workspace --all-targets --release --target x86_64-unknown-linux-gnu
+          no_output_timeout: 30m
       - save_cache:
-          key: sccache-v1-{{ checksum "Cargo.lock" }}
+          key: cargo-cache-v2-{{ checksum "Cargo.lock" }}
           paths:
-            - $CARGO_HOME/registry
-            - $CARGO_HOME/git
+            - ~/.cargo/bin
+            - ~/.cargo/registry/index
+            - ~/.cargo/registry/cache
+            - ~/.cargo/git/db
             - /tmp/sccache
       - run:
           name: Create artifacts directory
@@ -65,9 +72,10 @@ jobs:
   build-linux-aarch64-gnu:
     machine:
       image: ubuntu-2204:current
-    resource_class: arm.medium
+    resource_class: arm.large
     environment:
       SCCACHE_DIR: "/tmp/sccache"
+      CARGO_BUILD_JOBS: "4"
     steps:
       - checkout
       - run:
@@ -81,16 +89,19 @@ jobs:
             source $BASH_ENV
       - restore_cache:
           keys:
-            - sccache-v1-{{ checksum "Cargo.lock" }}
-            - sccache-v1-
+            - cargo-cache-v2-{{ checksum "Cargo.lock" }}
+            - cargo-cache-v2-
       - run:
           name: Build for aarch64-unknown-linux-gnu
           command: cargo build --workspace --all-targets --release --target aarch64-unknown-linux-gnu
+          no_output_timeout: 30m
       - save_cache:
-          key: sccache-v1-{{ checksum "Cargo.lock" }}
+          key: cargo-cache-v2-{{ checksum "Cargo.lock" }}
           paths:
-            - ~/.cargo/registry
-            - ~/.cargo/git
+            - ~/.cargo/bin
+            - ~/.cargo/registry/index
+            - ~/.cargo/registry/cache
+            - ~/.cargo/git/db
             - /tmp/sccache
       - run:
           name: Create artifacts directory
@@ -105,27 +116,34 @@ jobs:
 
   build-linux-x86_64-musl:
     executor: rust-musl-executor
+    resource_class: large
     environment:
       SCCACHE_DIR: "/tmp/sccache"
+      CARGO_BUILD_JOBS: "4"
     steps:
       - checkout
       - run:
           name: Install build dependencies
-          command: apk add --no-cache sccache musl-dev
+          command: |
+            apk update
+            apk add --no-cache sccache musl-dev
       - restore_cache:
           keys:
-            - sccache-v1-{{ checksum "Cargo.lock" }}
-            - sccache-v1-
+            - cargo-cache-v2-musl-{{ checksum "Cargo.lock" }}
+            - cargo-cache-v2-musl-
       - run:
           name: Build for x86_64-unknown-linux-musl
           environment:
             RUSTC_WRAPPER: /usr/bin/sccache
           command: cargo build --workspace --all-targets --release --target x86_64-unknown-linux-musl
+          no_output_timeout: 30m
       - save_cache:
-          key: sccache-v1-{{ checksum "Cargo.lock" }}
+          key: cargo-cache-v2-musl-{{ checksum "Cargo.lock" }}
           paths:
-            - $CARGO_HOME/registry
-            - $CARGO_HOME/git
+            - /root/.cargo/bin
+            - /root/.cargo/registry/index
+            - /root/.cargo/registry/cache
+            - /root/.cargo/git/db
             - /tmp/sccache
       - run:
           name: Create artifacts directory
@@ -142,8 +160,14 @@ jobs:
     macos:
       xcode: "15.4.0"
     resource_class: macos.m1.medium.gen1
+    environment:
+      CARGO_BUILD_JOBS: "4"
     steps:
       - checkout
+      - restore_cache:
+          keys:
+            - cargo-cache-v2-macos-{{ checksum "Cargo.lock" }}
+            - cargo-cache-v2-macos-
       - run:
           name: Install Rust
           command: |
@@ -152,6 +176,14 @@ jobs:
       - run:
           name: Build for aarch64-apple-darwin
           command: cargo build --workspace --all-targets --release --target aarch64-apple-darwin
+          no_output_timeout: 30m
+      - save_cache:
+          key: cargo-cache-v2-macos-{{ checksum "Cargo.lock" }}
+          paths:
+            - ~/.cargo/bin
+            - ~/.cargo/registry/index
+            - ~/.cargo/registry/cache
+            - ~/.cargo/git/db
       - run:
           name: Create artifacts directory
           command: mkdir -p /tmp/artifacts
@@ -164,15 +196,18 @@ jobs:
             - artifacts
 
   build-windows-x86_64-msvc:
-    executor: win/default
+    executor:
+      name: win/default
+      size: large
     environment:
       SCCACHE_DIR: 'C:\Users\circleci\AppData\Local\sccache'
+      CARGO_BUILD_JOBS: '4'
     steps:
       - checkout
       - restore_cache:
           keys:
-            - sccache-v1-{{ checksum "Cargo.lock" }}
-            - sccache-v1-
+            - cargo-cache-v2-windows-{{ checksum "Cargo.lock" }}
+            - cargo-cache-v2-windows-
       - run:
           name: Install Rust and sccache
           command: |
@@ -180,19 +215,24 @@ jobs:
             .\rustup-init.exe -y --default-toolchain stable --profile minimal
             Add-Content -Path $Profile.CurrentUserAllHosts -Value '$env:PATH = "C:\Users\circleci\.cargo\bin;$env:PATH"'
             . $Profile.CurrentUserAllHosts
-            cargo install sccache --version 0.8.1
+            if (-not (Test-Path "C:\Users\circleci\.cargo\bin\sccache.exe")) {
+              cargo install sccache --version 0.8.1 --no-default-features
+            }
           shell: powershell.exe
       - run:
           name: Build for x86_64-pc-windows-msvc
           environment:
             RUSTC_WRAPPER: 'C:\Users\circleci\.cargo\bin\sccache.exe'
           command: cargo build --workspace --all-targets --release --target x86_64-pc-windows-msvc
+          no_output_timeout: 30m
           shell: powershell.exe
       - save_cache:
-          key: sccache-v1-{{ checksum "Cargo.lock" }}
+          key: cargo-cache-v2-windows-{{ checksum "Cargo.lock" }}
           paths:
-            - 'C:\Users\circleci\.cargo\registry'
-            - 'C:\Users\circleci\.cargo\git'
+            - 'C:\Users\circleci\.cargo\bin'
+            - 'C:\Users\circleci\.cargo\registry\index'
+            - 'C:\Users\circleci\.cargo\registry\cache'
+            - 'C:\Users\circleci\.cargo\git\db'
             - 'C:\Users\circleci\AppData\Local\sccache'
       - run:
           name: Create artifacts directory
