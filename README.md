@@ -3,6 +3,7 @@
 **A modern, high-performance CLI tool for spatial data conversion and processing**
 
 [![CircleCI](https://dl.circleci.com/status-badge/img/circleci/UK2J6T4ubf71ANgcFAB7P/x3Eu8P4L3pc8Mvt6hgBTq/tree/main.svg?style=shield)](https://dl.circleci.com/status-badge/redirect/circleci/UK2J6T4ubf71ANgcFAB7P/x3Eu8P4L3pc8Mvt6hgBTq/tree/main)
+[![codecov](https://codecov.io/gh/geoyogesh/GeoETL/graph/badge.svg?token=7E3VxI2zkg)](https://codecov.io/gh/geoyogesh/GeoETL)
 [![style: rustfmt](https://img.shields.io/badge/style-rustfmt-lg.svg)](https://github.com/rust-lang/rustfmt)
 [![Rust](https://img.shields.io/badge/rust-1.90%2B-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)

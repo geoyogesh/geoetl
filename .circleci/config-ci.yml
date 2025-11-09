@@ -1,5 +1,8 @@
 version: 2.1
 
+orbs:
+  codecov: codecov/codecov@4.2.0
+
 # Define reusable executors
 executors:
   rust-executor:
@@ -85,41 +88,8 @@ jobs:
           paths:
             - target/release/*
 
-  # Run tests
-  test:
-    executor: rust-executor
-    environment:
-      SCCACHE_DIR: "/tmp/sccache"
-    steps:
-      - checkout
-      - restore_cache:
-          keys:
-            - sccache-v1-{{ checksum "Cargo.lock" }}
-            - sccache-v1-
-      - run:
-          name: Install sccache
-          command: |
-            cargo install sccache
-            echo 'export RUSTC_WRAPPER=$(which sccache)' >> $BASH_ENV
-            source $BASH_ENV
-      - run:
-          name: Run tests
-          command: cargo test --workspace --all-targets
-      - run:
-          name: Create test results directory
-          command: mkdir -p test-results
-          when: always
-      - store_test_results:
-          path: test-results
-      - save_cache:
-          key: sccache-v1-{{ checksum "Cargo.lock" }}
-          paths:
-            - $CARGO_HOME/registry
-            - $CARGO_HOME/git
-            - /tmp/sccache
-
-  # Code coverage
-  coverage:
+  # Run tests and generate coverage
+  test-and-coverage:
     executor: rust-executor
     environment:
       SCCACHE_DIR: "/tmp/sccache"
@@ -143,11 +113,14 @@ jobs:
           name: Display coverage summary
           command: cargo llvm-cov --workspace --all-targets --summary-only
       - run:
-          name: Upload coverage to Codecov
-          command: |
-            curl -Os https://uploader.codecov.io/latest/linux/codecov
-            chmod +x codecov
-            ./codecov -t ${CODECOV_TOKEN} -f lcov.info -F unittests
+          name: Create test results directory
+          command: mkdir -p test-results
+          when: always
+      - store_test_results:
+          path: test-results
+      - codecov/upload:
+          file: lcov.info
+          flags: unittests
       - store_artifacts:
           path: lcov.info
           destination: coverage/lcov.info
@@ -203,9 +176,6 @@ workflows:
       - lint
       - security
       - build
-      - test:
+      - test-and-coverage:
           requires:
             - build
-      - coverage:
-          requires:
-            - test

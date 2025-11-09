@@ -1,0 +1,58 @@
+# For more information, see: https://docs.codecov.com/docs/codecov-yaml
+
+# Coverage targets
+coverage:
+  status:
+    project:
+      default:
+        target: 80%  # Overall project coverage target
+        threshold: 2%  # Allow 2% drop before failing
+    patch:
+      default:
+        target: 80%  # New code should have 80% coverage
+        threshold: 2%
+
+# Ignore certain paths from coverage
+ignore:
+  - "bench" # Exclude benchmark directory
+  - "**/tests" # Exclude all test directories
+
+# Customize the pull request comment
+comment:
+  layout: "reach,diff,flags,files"
+  behavior: default
+  require_changes: false  # Post a comment even if coverage doesn't change
+
+# Define components for better organization
+component_management:
+  individual_components:
+    # Core components
+    - component_id: geoetl-cli
+      name: "CLI"
+      paths:
+        - "crates/geoetl-cli/**"
+    - component_id: geoetl-core
+      name: "Core"
+      paths:
+        - "crates/geoetl-core/**"
+    - component_id: geoetl-core-common
+      name: "Core Common"
+      paths:
+        - "crates/geoetl-core-common/**"
+    - component_id: geoetl-operations
+      name: "Operations"
+      paths:
+        - "crates/geoetl-operations/**"
+    # Format drivers
+    - component_id: datafusion-formats
+      name: "Format Drivers"
+      paths:
+        - "crates/formats/**"
+
+# Define your coverage flags
+flags:
+  unittests:
+    # This flag is for unit tests
+    # You can add more flags for integration tests, e.g., integration-tests
+    paths:
+      - "crates/"
