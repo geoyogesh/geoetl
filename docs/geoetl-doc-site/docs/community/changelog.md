@@ -11,6 +11,61 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2025-11-08
+
+### Added
+
+- **SQL Query Support** ([#54e1ab5](https://github.com/geoyogesh/geoetl/commit/54e1ab5))
+  - Added `--sql` flag to execute SQL queries on input datasets during conversion
+  - Added `--table-name` flag to override auto-inferred table names
+  - Automatic table name inference from input filenames (e.g., `cities.csv` → table `"cities"`)
+  - Full DataFusion SQL capabilities: WHERE, SELECT, JOIN, GROUP BY, ORDER BY, LIMIT
+  - Support for filtering, column selection, aggregations, sorting, and limiting results
+  - Enables data transformation workflows without intermediate files
+
+- **Comprehensive SQL Testing**
+  - Added 7 integration tests covering SQL query functionality:
+    - SQL filtering with WHERE clauses
+    - Column selection with SELECT
+    - Aggregations with GROUP BY
+    - Sorting with ORDER BY
+    - Custom table name overrides
+    - Invalid SQL query error handling
+    - Multi-step filter and transform workflows
+
+- **SQL Documentation**
+  - Added 5 SQL query examples to convert.md (Examples 7-11)
+  - Added 3 common SQL workflow examples
+  - Documented table name inference behavior
+  - Added data processing options section
+
+- **Release Blog Posts** ([#6aa66f6](https://github.com/geoyogesh/geoetl/commit/6aa66f6))
+  - Added missing release blog posts for v0.1.2, v0.2.0, and v0.3.1
+  - Created release blog post guidelines in docs/README_blog_release_post.md
+
+### Changed
+
+- **Documentation Restructure** ([#8526f07](https://github.com/geoyogesh/geoetl/commit/8526f07))
+  - Established single source of truth for documentation in website
+  - Removed promotional content and duplicated documentation
+  - Added comprehensive community section (changelog, contributing, roadmap)
+  - Reorganized drivers documentation with dedicated vector format pages
+  - Added detailed getting started guides and tutorials
+  - Created programs reference section with command documentation
+  - Added FAQ and glossary for better discoverability
+  - Improved troubleshooting guide
+  - Total: 4,442 additions, 1,628 deletions across 38 files
+
+- `convert` operation now accepts optional `sql_query` and `table_name_override` parameters
+- `initialize_context` function now returns both `SessionContext` and inferred/custom table name
+- All existing tests updated to include new optional SQL parameters
+
+### Breaking Changes
+
+None - all new parameters are optional and backward compatible
+
+---
+
 ## [0.3.1] - 2025-11-06
 
 ### Added
