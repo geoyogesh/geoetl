@@ -30,7 +30,7 @@ repository = "https://github.com/geoetl/geoetl"
 [workspace.dependencies]
 anyhow = "1.0.100"
 arrow = "56"
-arrow-array = "56"
+arrow-array = "57"
 arrow-cast = "56"
 arrow-csv = "56"
 arrow-json = "56"
