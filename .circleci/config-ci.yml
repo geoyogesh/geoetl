@@ -57,39 +57,10 @@ jobs:
             - $CARGO_HOME/registry
             - $CARGO_HOME/git
 
-  # Build
-  build:
-    executor: rust-executor
-    environment:
-      SCCACHE_DIR: "/tmp/sccache"
-    steps:
-      - checkout
-      - restore_cache:
-          keys:
-            - sccache-v1-{{ checksum "Cargo.lock" }}
-            - sccache-v1-
-      - run:
-          name: Install sccache
-          command: |
-            cargo install sccache
-            echo 'export RUSTC_WRAPPER=$(which sccache)' >> $BASH_ENV
-            source $BASH_ENV
-      - run:
-          name: Build workspace
-          command: cargo build --workspace --all-targets --release
-      - save_cache:
-          key: sccache-v1-{{ checksum "Cargo.lock" }}
-          paths:
-            - $CARGO_HOME/registry
-            - $CARGO_HOME/git
-            - /tmp/sccache
-      - persist_to_workspace:
-          root: .
-          paths:
-            - target/release/*
-
-  # Run tests and generate coverage
-  test-and-coverage:
+  # Build, test, and generate coverage in one job
+  # This is more efficient than separate jobs because cargo llvm-cov
+  # needs to recompile with instrumentation anyway
+  build-test-coverage:
     executor: rust-executor
     environment:
       SCCACHE_DIR: "/tmp/sccache"
@@ -175,7 +146,4 @@ workflows:
       - format
       - lint
       - security
-      - build
-      - test-and-coverage:
-          requires:
-            - build
+      - build-test-coverage
