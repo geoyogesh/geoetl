@@ -95,7 +95,7 @@ jobs:
           command: |
             curl -Os https://uploader.codecov.io/latest/linux/codecov
             chmod +x codecov
-            ./codecov -t ${CODECOV_TOKEN} -f lcov.info -F unittests
+            ./codecov -t ${CODECOV_TOKEN} -f lcov.info -F unittests -F e2e
       - store_artifacts:
           path: lcov.info
           destination: coverage/lcov.info

@@ -52,7 +52,10 @@ component_management:
 # Define your coverage flags
 flags:
   unittests:
-    # This flag is for unit tests
-    # You can add more flags for integration tests, e.g., integration-tests
+    # This flag is for unit tests and integration tests
     paths:
       - "crates/"
+  e2e:
+    # This flag is for end-to-end tests (geoetl-cli/tests)
+    paths:
+      - "crates/geoetl-cli/tests/"
