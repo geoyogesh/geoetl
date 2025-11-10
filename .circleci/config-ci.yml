@@ -1,8 +1,5 @@
 version: 2.1
 
-orbs:
-  codecov: codecov/codecov@5.4.3
-
 # Define reusable executors
 executors:
   rust-executor:
@@ -57,9 +54,7 @@ jobs:
             - $CARGO_HOME/registry
             - $CARGO_HOME/git
 
-  # Build, test, and generate coverage in one job
-  # This is more efficient than separate jobs because cargo llvm-cov
-  # needs to recompile with instrumentation anyway
+  # Build, test, and coverage (combined for efficiency)
   build-test-coverage:
     executor: rust-executor
     environment:
@@ -78,22 +73,29 @@ jobs:
             source $BASH_ENV
             cargo install cargo-llvm-cov
       - run:
-          name: Generate coverage report
-          command: cargo llvm-cov --workspace --all-targets --fail-under-lines 80 --lcov --output-path lcov.info
+          name: Build workspace
+          command: cargo build --workspace --all-targets --release
       - run:
-          name: Display coverage summary
-          command: cargo llvm-cov --workspace --all-targets --summary-only
+          name: Run tests
+          command: cargo test --workspace --all-targets
       - run:
           name: Create test results directory
           command: mkdir -p test-results
           when: always
       - store_test_results:
           path: test-results
-      - codecov/upload:
-          files: lcov.info
-          flags: unittests
-          branch: << pipeline.git.branch >>
-          fail_on_error: true
+      - run:
+          name: Generate coverage report
+          command: cargo llvm-cov --workspace --all-targets --fail-under-lines 80 --lcov --output-path lcov.info
+      - run:
+          name: Display coverage summary
+          command: cargo llvm-cov --workspace --all-targets --summary-only
+      - run:
+          name: Upload coverage to Codecov
+          command: |
+            curl -Os https://uploader.codecov.io/latest/linux/codecov
+            chmod +x codecov
+            ./codecov -t ${CODECOV_TOKEN} -f lcov.info -F unittests
       - store_artifacts:
           path: lcov.info
           destination: coverage/lcov.info

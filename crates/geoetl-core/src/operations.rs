@@ -13,24 +13,6 @@ use log::{info, warn};
 // Type alias for backward compatibility during migration
 type Result<T> = std::result::Result<T, GeoEtlError>;
 
-/// Infer table name from input file path.
-///
-/// Extracts the filename (without extension) to use as the table name in SQL queries.
-/// Falls back to "dataset" if the filename cannot be determined.
-///
-/// # Examples
-///
-/// * `/path/to/cities.geojson` -> `cities`
-/// * `buildings.csv` -> `buildings`
-/// * `/tmp/data` -> `data`
-/// * Invalid path -> `dataset`
-fn infer_table_name(input_path: &str) -> String {
-    std::path::Path::new(input_path)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .map_or_else(|| "dataset".to_string(), std::string::ToString::to_string)
-}
-
 /// Initialize a `DataFusion` session context and register a dataset.
 ///
 /// This is a common entry point for all ETL operations that need to work with a dataset.
@@ -73,12 +55,24 @@ async fn initialize_context(
 
     let ctx = SessionContext::new_with_config(config);
 
-    // Use custom table name if provided, otherwise infer from filename
+    // Use custom table name if provided, otherwise infer from filename using the factory
     let table_name = if let Some(custom_name) = table_name_override {
         info!("Using custom table name '{custom_name}'");
         custom_name.to_string()
     } else {
-        let inferred = infer_table_name(input);
+        // Get factory from global registry to use format-specific table name inference
+        let registry = geoetl_core_common::driver_registry();
+        let factory =
+            registry
+                .find_factory(driver.short_name)
+                .ok_or_else(|| DriverError::NotRegistered {
+                    driver: driver.short_name.to_string(),
+                })?;
+
+        // Try to infer table name from the format, fallback to "dataset" if inference fails
+        let inferred = factory
+            .infer_table_name(input)
+            .unwrap_or_else(|| "dataset".to_string());
         info!("Registering input as table '{inferred}'");
         inferred
     };

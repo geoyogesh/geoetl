@@ -124,6 +124,15 @@ impl FormatFactory for GeoJsonFormatFactory {
         let format = crate::file_format::GeoJsonFormat::new(options);
         Some(Arc::new(format))
     }
+
+    fn infer_table_name(&self, input_path: &str) -> Option<String> {
+        // GeoJSON-specific table name inference
+        // Extract filename without extension
+        std::path::Path::new(input_path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(std::string::ToString::to_string)
+    }
 }
 
 /// Registers the `GeoJSON` format with the global driver registry.

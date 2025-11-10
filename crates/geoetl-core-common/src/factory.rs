@@ -50,6 +50,22 @@ pub trait FormatFactory: Send + Sync {
         // Default implementation returns None (streaming not supported)
         None
     }
+
+    /// Infers a table name from an input path.
+    ///
+    /// Each format can customize how table names are inferred from file paths.
+    /// This allows formats to implement their own naming conventions based on
+    /// file extensions, paths, or other format-specific logic.
+    ///
+    /// # Arguments
+    ///
+    /// * `input_path` - The input file path
+    ///
+    /// # Returns
+    ///
+    /// `Some(String)` if a table name can be inferred, `None` if inference fails.
+    /// The caller is responsible for providing a default fallback name.
+    fn infer_table_name(&self, input_path: &str) -> Option<String>;
 }
 
 /// Global registry of format factories.

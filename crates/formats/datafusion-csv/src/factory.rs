@@ -190,6 +190,15 @@ impl FormatFactory for CsvFormatFactory {
 
         Some(Arc::new(CsvFormat::new(options)))
     }
+
+    fn infer_table_name(&self, input_path: &str) -> Option<String> {
+        // CSV-specific table name inference
+        // Extract filename without extension
+        std::path::Path::new(input_path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(std::string::ToString::to_string)
+    }
 }
 
 /// Registers the CSV format with the global driver registry.
