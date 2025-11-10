@@ -92,6 +92,8 @@ jobs:
       - codecov/upload:
           files: lcov.info
           flags: unittests
+          branch: << pipeline.git.branch >>
+          fail_on_error: true
       - store_artifacts:
           path: lcov.info
           destination: coverage/lcov.info
